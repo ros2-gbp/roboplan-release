@@ -1,0 +1,12 @@
+Source: ros-kilted-roboplan-rrt
+Section: misc
+Priority: optional
+Maintainer: "Sebastian Castro" <sebas.a.castro@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), nanobind-dev, ros-kilted-ament-cmake, ros-kilted-ament-cmake-gtest <!nocheck>, ros-kilted-ament-cmake-pytest <!nocheck>, ros-kilted-ament-cmake-python, ros-kilted-roboplan, ros-kilted-roboplan-example-models <!nocheck>, ros-kilted-ros-workspace
+Homepage: https://index.ros.org/p/roboplan_rrt/#kilted
+Standards-Version: 3.9.2
+
+Package: ros-kilted-roboplan-rrt
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, nanobind-dev, ros-kilted-roboplan, ros-kilted-ros-workspace
+Description: Rapidly-Exploring Random Tree (RRT) implementation for RoboPlan.
