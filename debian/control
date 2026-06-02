@@ -1,0 +1,12 @@
+Source: ros-rolling-roboplan-examples
+Section: misc
+Priority: optional
+Maintainer: "Sebastian Castro" <sebas.a.castro@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), ros-rolling-ament-cmake, ros-rolling-roboplan, ros-rolling-roboplan-example-models, ros-rolling-roboplan-oink, ros-rolling-roboplan-rrt, ros-rolling-roboplan-simple-ik, ros-rolling-roboplan-toppra, ros-rolling-ros-workspace
+Homepage: https://index.ros.org/p/roboplan_examples/#rolling
+Standards-Version: 3.9.2
+
+Package: ros-rolling-roboplan-examples
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-rolling-roboplan, ros-rolling-roboplan-example-models, ros-rolling-roboplan-oink, ros-rolling-roboplan-rrt, ros-rolling-roboplan-simple-ik, ros-rolling-roboplan-toppra, ros-rolling-xacro, ros-rolling-ros-workspace
+Description: Basic examples of RoboPlan.
