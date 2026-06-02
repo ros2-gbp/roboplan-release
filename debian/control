@@ -1,0 +1,12 @@
+Source: ros-rolling-roboplan-rrt
+Section: misc
+Priority: optional
+Maintainer: "Sebastian Castro" <sebas.a.castro@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), nanobind-dev, ros-rolling-ament-cmake, ros-rolling-ament-cmake-gtest <!nocheck>, ros-rolling-ament-cmake-pytest <!nocheck>, ros-rolling-ament-cmake-python, ros-rolling-roboplan, ros-rolling-roboplan-example-models <!nocheck>, ros-rolling-ros-workspace
+Homepage: https://index.ros.org/p/roboplan_rrt/#rolling
+Standards-Version: 3.9.2
+
+Package: ros-rolling-roboplan-rrt
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, nanobind-dev, ros-rolling-roboplan, ros-rolling-ros-workspace
+Description: Rapidly-Exploring Random Tree (RRT) implementation for RoboPlan.
