@@ -1,29 +1,14 @@
-# roboplan
+# OInK: Optimal Inverse Kinematics
 
-Modern robot motion planning library based on Pinocchio.
+The OInK solver uses Quadratic Programming (QP) to compute joint displacements that achieve multiple objectives while respecting constraints and safety barriers.
 
-Refer to the [full documentation](https://roboplan.readthedocs.io) for more information.
+For more information, refer to the [documentation](../docs/source/concepts/inverse_kinematics.rst).
 
-> [!WARNING]
-> This is an experimental, work-in-progress repository!
+## Acknowledgments
 
----
+This project is inspired by, and adapts code and concepts from, the following fantastic open-source libraries:
+- [Pink](https://github.com/stephane-caron/pink) by Stéphane Caron.
+- [OSCBF](https://github.com/StanfordASL/oscbf) by Daniel Morton and Marco Pavone.
+- [PlaCo](https://github.com/Rhoban/placo) by Marc Duclusaud, Grégoire Passault, Vincent Padois and Olivier Ly.
 
-## Packages list
-
-The main folders found in this repo are as follows.
-
-- `docs` : The documentation source.
-- `roboplan` : The core C++ library.
-- `roboplan_simple_ik` : A simple inverse kinematics (IK) solver.
-- `roboplan_oink` : A task-based Optimal Inverse Kinematics (OInK) solver.
-- `roboplan_rrt` : A Rapidly-exploring Random Tree (RRT) based motion planner.
-- `roboplan_toppra` : A wrapper around the TOPP-RA algorithm for trajectory timing.
-- `roboplan_example_models` : Contains robot models used for testing and examples.
-- `roboplan_examples` : Basic examples with real robot models.
-
----
-
-![Interactive inverse kinematics (IK) with Kinova Gen3 arm.](docs/source/media/kinova_ik.gif)
-
-![Rapidly-exploring random tree (RRT) with dual Franka FR3 arms.](docs/source/media/dual_franka_rrt.gif)
+A sincere appreciation goes out to the original authors for their work and dedication in creating such valuable resources!
