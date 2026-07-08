@@ -2,14 +2,18 @@
 authors   = ["Sebastian Castro <sebas.a.castro@gmail.com>", "JafarAbdi <jafar.uruc@gmail.com>"]
 channels  = ["conda-forge"]
 name      = "roboplan"
-platforms = ["linux-64", "linux-aarch64"]
-version   = "0.4.0"
+platforms = ["linux-64", "linux-aarch64", "osx-arm64"]
+version   = "0.5.0"
 
 [activation.env]
 CMAKE_INSTALL_PREFIX = "$CONDA_PREFIX"
 LD_LIBRARY_PATH      = "$CONDA_PREFIX/lib"
 ASAN_OPTIONS         = "symbolize=1:print_stacktrace=1"
 ASAN_SYMBOLIZER_PATH = "$CONDA_PREFIX/bin/llvm-symbolizer"
+ROBOPLAN_LINKER_FLAG = " "
+
+[target.linux.activation.env]
+ROBOPLAN_LINKER_FLAG = "-fuse-ld=mold"
 
 [feature.local.activation.env]
 CMAKE_INSTALL_MODE   = "SYMLINK"
@@ -30,10 +34,10 @@ configure = { cmd = [
   # Use clang as the compiler
   "-DCMAKE_C_COMPILER=clang",
   "-DCMAKE_CXX_COMPILER=clang++",
-  # Use mold as the linker
-  "-DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=mold",
-  "-DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=mold",
-  "-DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=mold",
+  # Use mold as the linker, only on linux
+  "-DCMAKE_EXE_LINKER_FLAGS=$ROBOPLAN_LINKER_FLAG",
+  "-DCMAKE_MODULE_LINKER_FLAGS=$ROBOPLAN_LINKER_FLAG",
+  "-DCMAKE_SHARED_LINKER_FLAGS=$ROBOPLAN_LINKER_FLAG",
   # Use sccache to speed up compilation
   "-DCMAKE_C_COMPILER_LAUNCHER=sccache",
   "-DCMAKE_CXX_COMPILER_LAUNCHER=sccache",
@@ -46,12 +50,11 @@ configure = { cmd = [
   # Disable warnings about unused command line arguments
   "--no-warn-unused-cli",
   "-S",
-  "{{ package_path }}",
+  "{{ package_name }}",
   "-B",
   "build//{{ package_name }}",
 ], args = [
   { arg = "package_name" },
-  { arg = "package_path" },
   { arg = "cxx_flags", default = "" },
   { arg = "extra_flags", default = "" },
 ] }
@@ -62,13 +65,11 @@ build = { cmd = [
 ], depends-on = [
   { task = "configure", args = [
     "{{ package_name }}",
-    "{{ package_path }}",
     "{{ cxx_flags }}",
     "{{ extra_flags }}",
   ] },
 ], args = [
   { arg = "package_name" },
-  { arg = "package_path" },
   { arg = "cxx_flags", default = "" },
   { arg = "extra_flags", default = "" },
 ] }
@@ -79,13 +80,11 @@ install = { cmd = [
 ], depends-on = [
   { task = "build", args = [
     "{{ package_name }}",
-    "{{ package_path }}",
     "{{ cxx_flags }}",
     "{{ extra_flags }}",
   ] },
 ], args = [
   { arg = "package_name" },
-  { arg = "package_path" },
   { arg = "cxx_flags", default = "" },
   { arg = "extra_flags", default = "" },
 ] }
@@ -95,17 +94,18 @@ install = { cmd = [
 # dependents: they resolve it via find_package(roboplan) and import roboplan.core
 # during stub generation.
 build_all = { depends-on = [
-  { task = "install", args = ["roboplan_example_models", "roboplan_example_models"] },
-  { task = "install", args = ["roboplan", "roboplan"] },
-  { task = "install", args = ["roboplan_simple_ik", "roboplan_simple_ik"] },
-  { task = "install", args = ["roboplan_oink", "roboplan_oink"] },
-  { task = "install", args = ["roboplan_rrt", "roboplan_rrt"] },
-  { task = "install", args = ["roboplan_toppra", "roboplan_toppra"] },
-  { task = "build", args = ["roboplan_examples", "roboplan_examples"] },
+  { task = "install", args = ["roboplan_example_models"] },
+  { task = "install", args = ["roboplan"] },
+  { task = "install", args = ["roboplan_simple_ik"] },
+  { task = "install", args = ["roboplan_oink"] },
+  { task = "install", args = ["roboplan_rrt"] },
+  { task = "install", args = ["roboplan_toppra"] },
+  { task = "install", args = ["roboplan_cartesian_planning"] },
+  { task = "build", args = ["roboplan_examples"] },
 ] }
 install_all = { depends-on = [
   { task = "build_all" },
-  { task = "install", args = ["roboplan_examples", "roboplan_examples"] },
+  { task = "install", args = ["roboplan_examples"] },
 ] }
 
 build_asan = { cmd = [
@@ -116,6 +116,7 @@ build_asan = { cmd = [
   { task = "configure", args = [
     "{{ package_name }}",
     "-fsanitize=address",
+    "-DGENERATE_PYTHON_STUBS=OFF",
   ] },
 ], args = [
   { arg = "package_name" },
@@ -124,56 +125,51 @@ build_asan = { cmd = [
 build_timetrace = { depends-on = [
   { task = "configure", args = [
     "{{ package_name }}",
-    "{{ package_path }}",
     "-ftime-trace",
   ] },
   { task = "build", args = [
     "{{ package_name }}",
-    "{{ package_path }}",
   ] },
 ], args = [
   { arg = "package_name" },
-  { arg = "package_path" },
 ] }
 build_tests = { depends-on = [
   { task = "install", args = [
     "roboplan_example_models",
-    "roboplan_example_models",
     "{{ cxx_flags }}",
     "ON",
   ] },
   { task = "install", args = [
-    "roboplan",
     "roboplan",
     "{{ cxx_flags }}",
     "ON",
   ] },
   { task = "install", args = [
     "roboplan_simple_ik",
-    "roboplan_simple_ik",
     "{{ cxx_flags }}",
     "ON",
   ] },
   { task = "install", args = [
-    "roboplan_oink",
     "roboplan_oink",
     "{{ cxx_flags }}",
     "ON",
   ] },
   { task = "install", args = [
     "roboplan_rrt",
-    "roboplan_rrt",
     "{{ cxx_flags }}",
     "ON",
   ] },
   { task = "install", args = [
     "roboplan_toppra",
-    "roboplan_toppra",
+    "{{ cxx_flags }}",
+    "ON",
+  ] },
+  { task = "install", args = [
+    "roboplan_cartesian_planning",
     "{{ cxx_flags }}",
     "ON",
   ] },
   { task = "build", args = [
-    "roboplan_examples",
     "roboplan_examples",
     "{{ cxx_flags }}",
     "ON",
@@ -194,22 +190,37 @@ test_cpp = { depends-on = [
   { task = "test", args = ["roboplan_simple_ik"] },
   { task = "test", args = ["roboplan_oink"] },
   { task = "test", args = ["roboplan_toppra"] },
+  { task = "test", args = ["roboplan_cartesian_planning"] },
 ] }
 test_all = { depends-on = ["test_py", "test_cpp"] }
 test_benchmarks = { cmd = "python3 -m pytest benchmarks/ --benchmark-json pytest_benchmarks.json" }
 
+# Clang-tidy static analysis
+clang-tidy = { cmd = [
+  "bash",
+  "scripts/run_clang_tidy.bash",
+  "{{ package_name }}",
+], args = [
+  { arg = "package_name", default = "" },
+] }
+
+clang-tidy-fix = { cmd = [
+  "bash",
+  "scripts/run_clang_tidy.bash",
+  "{{ package_name }}",
+  "--fix",
+], args = [
+  { arg = "package_name", default = "" },
+] }
+
 [dependencies]
 
 # Build dependencies
+clang-tools = ">=19.1.7,<20"
 cmake       = ">=3.30.5,<4"
 ninja       = ">=1.12.1,<2"
 clangxx     = ">=19.1.7,<20"
-gxx         = ">=11,<12"
-gcc         = ">=11,<12"
 lld         = ">=19.1.2,<20"
-libstdcxx   = ">=15.1.0,<16"
-llvm-openmp = ">=19.1.7,<20"
-mold        = ">=2.40.2,<3"
 sccache     = ">=0.10.0,<0.11"
 yaml-cpp    = ">=0.8.0,<0.9"
 
@@ -248,6 +259,13 @@ compiler-rt = ">=19.1.7,<20"
 # Python test dependencies
 pytest = ">=6"
 pytest-benchmark = ">=5.1.0,<6"
+
+[target.linux.dependencies]
+gxx         = ">=11,<12"
+gcc         = ">=11,<12"
+libstdcxx   = ">=15.1.0,<16"
+llvm-openmp = ">=19.1.7,<20"
+mold        = ">=2.40.2,<3"
 
 [feature.lint.dependencies]
 pre-commit = ">=4.1.0,<5"
