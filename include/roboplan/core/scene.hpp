@@ -10,6 +10,7 @@
 #include <pinocchio/algorithm/frames.hpp>
 #include <pinocchio/algorithm/geometry.hpp>
 #include <pinocchio/algorithm/joint-configuration.hpp>
+#include <pinocchio/collision/broadphase-manager.hpp>
 #include <pinocchio/fwd.hpp>
 #include <pinocchio/multibody/data.hpp>
 #include <pinocchio/multibody/geometry.hpp>
@@ -18,6 +19,15 @@
 
 #include <roboplan/core/geometry_wrappers.hpp>
 #include <roboplan/core/types.hpp>
+
+// The concrete broadphase manager (AABB tree). Mirror the coal/hpp-fcl include guard used in
+// geometry_wrappers.hpp so the `coal` namespace resolves in both modern and legacy builds.
+#if defined(__has_include) && __has_include(<coal/fwd.hh>)
+#include <coal/broadphase/broadphase_dynamic_AABB_tree.h>
+#else
+#include <hpp/fcl/broadphase/broadphase_dynamic_AABB_tree.h>
+namespace coal = hpp::fcl;
+#endif
 
 namespace roboplan {
 
@@ -107,6 +117,14 @@ public:
   /// @return The random positions.
   Eigen::VectorXd randomPositions();
 
+  /// @brief Randomizes the positions of the specified joints in-place within a full configuration.
+  /// @details Only the degrees of freedom belonging to `joint_names` are overwritten; all other
+  /// entries of `q` are left untouched. This avoids allocating a full configuration and sampling
+  /// joints outside of a planning group on every call (e.g. in the RRT sampling loop).
+  /// @param joint_names The names of the joints to randomize.
+  /// @param q The full configuration vector to modify in-place. Must be sized to the model's nq.
+  void randomizeJointPositions(const std::vector<std::string>& joint_names, Eigen::VectorXd& q);
+
   /// @brief Generates random collision-free positions for the robot model.
   /// @param max_tries The maximum number of samples to attempt.
   /// @return The random positions, if successful, else std::nullopt.
@@ -122,7 +140,14 @@ public:
   /// @brief Checks if the specified joint positions are valid with respect to joint limits.
   /// @param q The joint positions.
   /// @return True if the positions respect joint limits, else false.
-  bool isValidPose(const Eigen::VectorXd& q) const;
+  bool isValidConfiguration(const Eigen::VectorXd& q) const;
+
+  /// @brief Clamps the specified joint positions to valid joint limits.
+  /// @details Bounded joints are clamped to their position limits, while continuous and planar
+  /// rotation representations are renormalized onto the unit circle.
+  /// @param q The joint positions.
+  /// @return A new vector of joint positions that respects joint limits.
+  Eigen::VectorXd clampToValidConfiguration(const Eigen::VectorXd& q) const;
 
   /// @brief Converts partial joint positions to full joint positions.
   /// @details This includes adding new joints.
@@ -148,17 +173,38 @@ public:
   /// @brief Calculates forward kinematics for a specific frame.
   /// @param q The joint configuration.
   /// @param frame_name The name of the frame for which to perform forward kinematics.
+  /// @param base_frame Optional base frame. If empty, returns the world-frame pose.
   /// @return The 4x4 matrix denoting the transform of the specified frame.
-  Eigen::Matrix4d forwardKinematics(const Eigen::VectorXd& q, const std::string& frame_name) const;
+  Eigen::Matrix4d forwardKinematics(const Eigen::VectorXd& q, const std::string& frame_name,
+                                    const std::string& base_frame = "") const;
 
-  /// @brief Computes the frame Jacobian for a specific frame.
+  /// @brief Computes the frame Jacobian for a specific frame expressed in world frame.
+  /// @note Requires that forward kinematics and frame placements are up-to-date, or that
+  /// this is the first kinematics call for the given q (the underlying Pinocchio call runs FK).
   /// @param q The joint configuration.
-  /// @param frame_id The Pinocchio frame ID.
-  /// @param reference_frame The reference frame for the Jacobian (LOCAL or WORLD).
+  /// @param frame_id The Pinocchio frame ID of the frame.
+  /// @param reference_frame The reference frame for the Jacobian output (LOCAL, WORLD, or
+  /// LOCAL_WORLD_ALIGNED).
   /// @param jacobian Output matrix to store the Jacobian (must be pre-allocated to 6 x nv).
   void computeFrameJacobian(const Eigen::VectorXd& q, pinocchio::FrameIndex frame_id,
                             pinocchio::ReferenceFrame reference_frame,
                             Eigen::Ref<Eigen::MatrixXd> jacobian) const;
+
+  /// @brief Computes the Jacobian of a frame's velocity relative to a (possibly moving) base frame.
+  /// @details Computes the Jacobian of the EE frame velocity relative to the base frame, expressed
+  /// in the reference frame of the relative transform T_rel = T_base^{-1} * T_ee.
+  /// @note Requires that forward kinematics and frame placements are up-to-date, or that
+  /// this is the first kinematics call for the given q (the underlying Pinocchio call runs FK).
+  /// @param q The joint configuration.
+  /// @param frame_id The Pinocchio frame ID of the end-effector frame.
+  /// @param base_frame The name of the base frame (its ID is looked up internally).
+  /// @param reference_frame The reference frame for the Jacobian output. LOCAL is expressed in the
+  /// body frame of T_rel; LOCAL_WORLD_ALIGNED is at the T_rel origin with world orientation.
+  /// @param jacobian Output matrix to store the Jacobian (must be pre-allocated to 6 x nv).
+  void computeRelativeFrameJacobian(const Eigen::VectorXd& q, pinocchio::FrameIndex frame_id,
+                                    const std::string& base_frame,
+                                    pinocchio::ReferenceFrame reference_frame,
+                                    Eigen::Ref<Eigen::MatrixXd> jacobian) const;
 
   /// @brief Computes the joint Jacobians for every joint at the given configuration.
   /// @details Populates the internal Pinocchio data so that pinocchio::getJointJacobian
@@ -342,6 +388,23 @@ private:
   /// @brief The default data structure for the underlying Pinocchio collision model.
   /// @details This won't be thread-safe unless each thread uses its own data.
   mutable pinocchio::GeometryData collision_model_data_;
+
+  /// @brief Broadphase collision manager type, using a dynamic AABB tree to cull non-overlapping
+  /// geometry pairs before narrow-phase collision checking.
+  using BroadPhaseManager = pinocchio::BroadPhaseManagerTpl<coal::DynamicAABBTreeCollisionManager>;
+
+  /// @brief Broadphase manager used to accelerate hasCollisions().
+  /// @details Caches AABB-tree state and holds pointers into collision_model_ and
+  /// collision_model_data_, so it must be rebuilt (see rebuildBroadphaseManager) whenever the
+  /// collision geometry or its data is changed. Mutable for the same reason as
+  /// collision_model_data_ (updated in place during a const collision query), and not thread-safe
+  /// across shared Scenes.
+  mutable std::optional<BroadPhaseManager> broadphase_manager_;
+
+  /// @brief (Re)builds broadphase_manager_ from the current collision model and data.
+  /// @details Must be called after collision_model_data_ is (re)assigned, since the manager caches
+  /// pointers and geometry state derived from it.
+  void rebuildBroadphaseManager();
 
   /// @brief The full list of joint names in the model (including mimic joints).
   std::vector<std::string> joint_names_;
