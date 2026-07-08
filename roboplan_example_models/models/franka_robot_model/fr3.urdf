@@ -1,9 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="fr3">
-
-  <xacro:include filename="fr3.xacro"/>
-
-  <link name="world"/>
-  <xacro:fr3_robot prefix="" parent_link="world" xyz="0 0 0" rpy="0 0 0"/>
-
-</robot>
