@@ -8,6 +8,7 @@
 #include <nanobind/stl/vector.h>
 
 #include <roboplan/core/path_utils.hpp>
+#include <roboplan/core/pose_utils.hpp>
 #include <roboplan/core/scene.hpp>
 #include <roboplan/core/scene_utils.hpp>
 #include <roboplan/core/types.hpp>
@@ -90,6 +91,8 @@ void init_core_types(nanobind::module_& m) {
       .def_rw("joint_names", &JointGroupInfo::joint_names,
               "The joint names that make up the group.")
       .def_rw("joint_indices", &JointGroupInfo::joint_indices, "The joint indices in the group.")
+      .def_rw("link_names", &JointGroupInfo::link_names,
+              "The link (body) names that make up the group.")
       .def_rw("q_indices", &JointGroupInfo::q_indices, "The position vector indices in the group.")
       .def_rw("v_indices", &JointGroupInfo::v_indices, "The velocity vector indices in the group.")
       .def_rw("has_continuous_dofs", &JointGroupInfo::has_continuous_dofs,
@@ -209,8 +212,10 @@ void init_core_scene(nanobind::module_& m) {
            "Generates random collision-free positions for the robot model.", "max_samples"_a = 1000)
       .def("hasCollisions", &Scene::hasCollisions,
            "Checks collisions at specified joint positions.", "q"_a, "debug"_a = false)
-      .def("isValidPose", &Scene::isValidPose,
+      .def("isValidConfiguration", &Scene::isValidConfiguration,
            "Checks if the specified joint positions are valid with respect to joint limits.", "q"_a)
+      .def("clampToValidConfiguration", &Scene::clampToValidConfiguration,
+           "Clamps the specified joint positions to valid joint limits.", "q"_a)
       .def("toFullJointPositions", &Scene::toFullJointPositions,
            "Converts partial joint positions to full joint positions.", "group_name"_a, "q"_a)
       .def("interpolate", &Scene::interpolate, "Interpolates between two joint configurations.",
@@ -219,7 +224,8 @@ void init_core_scene(nanobind::module_& m) {
            "Integrates a velocity vector from a configuration using Lie group operations.", "q"_a,
            "v"_a)
       .def("forwardKinematics", &Scene::forwardKinematics,
-           "Calculates forward kinematics for a specific frame.", "q"_a, "frame_name"_a)
+           "Calculates forward kinematics for a specific frame.", "q"_a, "frame_name"_a,
+           "base_frame"_a = "")
       .def(
           "computeFrameJacobian",
           [](const Scene& self, const Eigen::VectorXd& q, const std::string& frame_name,
@@ -231,12 +237,32 @@ void init_core_scene(nanobind::module_& m) {
             }
             const auto reference_frame =
                 local ? pinocchio::ReferenceFrame::LOCAL : pinocchio::ReferenceFrame::WORLD;
+
             Eigen::MatrixXd jacobian = Eigen::MatrixXd::Zero(6, self.getModel().nv);
             self.computeFrameJacobian(q, maybe_frame_id.value(), reference_frame, jacobian);
             return jacobian;
           },
-          "Computes the frame Jacobian for a specific frame.", "q"_a, "frame_name"_a,
-          "local"_a = true)
+          "Computes the frame Jacobian for a specific frame, expressed in world frame.", "q"_a,
+          "frame_name"_a, "local"_a = true)
+      .def(
+          "computeRelativeFrameJacobian",
+          [](const Scene& self, const Eigen::VectorXd& q, const std::string& frame_name,
+             const std::string& base_frame, bool local) -> Eigen::MatrixXd {
+            const auto maybe_frame_id = self.getFrameId(frame_name);
+            if (!maybe_frame_id) {
+              throw std::runtime_error("Frame '" + frame_name +
+                                       "' not found: " + maybe_frame_id.error());
+            }
+            const auto reference_frame =
+                local ? pinocchio::ReferenceFrame::LOCAL : pinocchio::ReferenceFrame::WORLD;
+
+            Eigen::MatrixXd jacobian = Eigen::MatrixXd::Zero(6, self.getModel().nv);
+            self.computeRelativeFrameJacobian(q, maybe_frame_id.value(), base_frame,
+                                              reference_frame, jacobian);
+            return jacobian;
+          },
+          "Computes the Jacobian of a frame's velocity relative to a base frame.", "q"_a,
+          "frame_name"_a, "base_frame"_a, "local"_a = true)
       .def("getFrameId", unwrap_expected(&Scene::getFrameId),
            "Get the Pinocchio model ID of a frame by its name.", "name"_a)
       .def("getJointGroupInfo", unwrap_expected(&Scene::getJointGroupInfo),
@@ -302,16 +328,47 @@ void init_core_path_utils(nanobind::module_& m) {
                                 const std::string&>(&computeFramePath),
         "Computes the Cartesian path of a specified frame using a vector of provided points.",
         "scene"_a, "q_vec"_a, "frame_name"_a);
-  m.def("hasCollisionsAlongPath", &hasCollisionsAlongPath,
-        "Checks collisions along a specified configuration space path.", "scene"_a, "q_start"_a,
-        "q_end"_a, "max_step_size"_a, "bisection"_a = false);
+  m.def("hasCollisionsAlongPath",
+        nanobind::overload_cast<const Scene&, const Eigen::VectorXd&, const Eigen::VectorXd&,
+                                const double, const bool, const bool>(&hasCollisionsAlongPath),
+        "Checks collisions along a specified configuration space path. Uses the Scene's own "
+        "collision scratch, so it is not safe to call concurrently with other queries on the same "
+        "Scene.",
+        "scene"_a, "q_start"_a, "q_end"_a, "max_step_size"_a, "bisection"_a = false,
+        "check_endpoints"_a = true);
+  m.def("computePathLength", unwrap_expected(&computePathLength),
+        "Computes the total configuration-space length of a joint path.", "scene"_a, "group_name"_a,
+        "path"_a);
+
+  nanobind::class_<PathShortcuttingOptions>(m, "PathShortcuttingOptions",
+                                            "Options struct for path shortcutting.")
+      .def(nanobind::init<const std::string&, double, unsigned int, int, unsigned int,
+                          unsigned int>(),
+           "group_name"_a = "", "max_step_size"_a = 0.05, "max_iters"_a = 100, "seed"_a = 0,
+           "max_convergence_iters"_a = 20, "redundant_removal_iters"_a = 20)
+      .def_rw("group_name", &PathShortcuttingOptions::group_name,
+              "The joint group name to be used for path shortcutting.")
+      .def_rw("max_step_size", &PathShortcuttingOptions::max_step_size,
+              "Maximum step size used in collision checking, and the minimum separable distance "
+              "between points in a shortcut.")
+      .def_rw("max_iters", &PathShortcuttingOptions::max_iters,
+              "Maximum number of iterations of random sampling.")
+      .def_rw("seed", &PathShortcuttingOptions::seed,
+              "Seed for the random generator. If < 0, a random seed is used.")
+      .def_rw("max_convergence_iters", &PathShortcuttingOptions::max_convergence_iters,
+              "Stop early once this many consecutive iterations fail to apply a shortcut. A value "
+              "of 0 disables early stopping.")
+      .def_rw(
+          "redundant_removal_iters", &PathShortcuttingOptions::redundant_removal_iters,
+          "Cadence (in iterations) at which to interleave the redundant-vertex removal pass that "
+          "cleans up the micro-segments introduced by shortcutting.");
 
   nanobind::class_<PathShortcutter>(
       m, "PathShortcutter", "Shortcuts joint paths with random sampling and checking connections.")
-      .def(nanobind::init<const std::shared_ptr<Scene>, const std::string&>(), "scene"_a,
-           "group_name"_a)
+      .def(nanobind::init<const std::shared_ptr<Scene>, const PathShortcuttingOptions&>(),
+           "scene"_a, "options"_a)
       .def("shortcut", &PathShortcutter::shortcut, "Attempts to shortcut a specified path.",
-           "path"_a, "max_step_size"_a, "max_iters"_a = 100, "seed"_a = 0)
+           "path"_a)
       .def("getPathLengths", unwrap_expected(&PathShortcutter::getPathLengths),
            "Computes configuration distances from the start to each pose in a path.", "path"_a)
       .def("getNormalizedPathScaling", unwrap_expected(&PathShortcutter::getNormalizedPathScaling),
@@ -320,6 +377,16 @@ void init_core_path_utils(nanobind::module_& m) {
            &PathShortcutter::getConfigurationFromNormalizedPathScaling,
            "Gets joint configurations from a path with normalized joint scalings.", "path"_a,
            "path_scalings"_a, "value"_a);
+}
+
+void init_core_pose_utils(nanobind::module_& m) {
+  m.def("poseError", &poseError,
+        "Computes the (position error [m], orientation error [rad]) between two SE(3) transforms "
+        "expressed in the same frame.",
+        "a"_a, "b"_a);
+  m.def("interpolatePose", &interpolatePose,
+        "Interpolates between two SE(3) transforms: linear in position, SLERP in orientation.",
+        "start"_a, "end"_a, "fraction"_a);
 }
 
 void init_core_scene_utils(nanobind::module_& m) {

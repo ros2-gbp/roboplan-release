@@ -6,6 +6,7 @@
 #include "OsqpEigen/OsqpEigen.h"
 #include <tl/expected.hpp>
 
+#include <roboplan/core/collision_context.hpp>
 #include <roboplan/core/scene.hpp>
 #include <roboplan/core/types.hpp>
 
@@ -360,18 +361,23 @@ struct Oink {
   /// @brief Validate delta_q against barriers using forward kinematics.
   ///
   /// This method provides a post-solve safety check by evaluating the actual barrier
-  /// values at the candidate configuration (q + delta_q). If any barrier would be
-  /// violated, delta_q is set to zero to prevent unsafe motion.
+  /// values at the candidate configuration (q + delta_q). It is a backup safety mechanism
+  /// for cases where the linearized CBF constraint in the QP has significant error (e.g.,
+  /// large jumps, near-boundary configurations). The QP constraint uses a first-order
+  /// approximation h(q + δq) ≈ h(q) + J_h · δq, which can have error O(||δq||²) for large
+  /// displacements.
   ///
-  /// This is a backup safety mechanism for cases where the linearized CBF constraint
-  /// in the QP has significant error (e.g., large jumps, near-boundary configurations).
-  /// The QP constraint uses a first-order approximation h(q + δq) ≈ h(q) + J_h · δq,
-  /// which can have significant error O(||δq||²) for large displacements.
+  /// Enforcement is per-barrier rather than global. For each barrier that would be violated
+  /// at the candidate configuration, only the joints that affect that barrier (its nonzero
+  /// Jacobian columns) are zeroed, so an unrelated kinematic chain, e.g, the other arm in a
+  /// dual-arm setup, is not frozen just because one frame left its bound.
+  /// A step that is still violated but strictly reduces the violation is allowed/
+  /// For example, a frame that started outside its bound can recover instead of deadlocking.
   ///
   /// @param scene The scene containing robot model and state
   /// @param barriers Vector of barrier functions to check
-  /// @param delta_q Configuration displacement to validate. Modified in place: set to
-  ///                zero if barrier violation is detected.
+  /// @param delta_q Configuration displacement to validate. Modified in place: the joints of
+  ///                each violated, non-recovering barrier are set to zero.
   /// @param tolerance Tolerance for barrier violation detection. A barrier is considered
   ///                  violated if h(q + delta_q) < -tolerance. Default is 0.0.
   /// @return void on success, error message if barrier evaluation fails
@@ -382,6 +388,13 @@ struct Oink {
   enforceBarriers(const Scene& scene, const std::vector<std::shared_ptr<Barrier>>& barriers,
                   Eigen::Ref<Eigen::VectorXd, 0, Eigen::InnerStride<Eigen::Dynamic>> delta_q,
                   double tolerance = 0.0);
+
+  /// @brief The solver's shared collision scratch (Data + GeometryData + broadphase).
+  /// @details Tasks, constraints, and/or barriers that require collision queries should use this
+  /// context instead of building their own, so a single snapshot of the scene's collision
+  /// geometry is reused across the whole solve. It is snapshotted from the scene at construction;
+  /// if the scene's collision geometry changes, rebuild the solver (context does not auto-sync).
+  const CollisionContext& getCollisionContext() const { return *collision_context_; }
 
 private:
   /// @brief Compute `task`'s Jacobian and error, and add its contribution to the QP Hessian
@@ -459,5 +472,8 @@ public:
   // Allocated once at construction so the per-solve barrier-feasibility check does not
   // create a fresh Data (which is sized for the entire model) on every call.
   pinocchio::Data enforce_barriers_data;
+
+  // Shared collision context, snapshotted from the construction scene.
+  std::unique_ptr<CollisionContext> collision_context_;
 };
 }  // namespace roboplan
