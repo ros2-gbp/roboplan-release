@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(roboplan VERSION 0.4.0)
+project(roboplan VERSION 0.5.0)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -45,7 +45,9 @@ endif()
 
 # Add roboplan libraries.
 add_library(roboplan SHARED
+    src/core/collision_context.cpp
     src/core/path_utils.cpp
+    src/core/pose_utils.cpp
     src/core/scene.cpp
     src/core/scene_utils.cpp
     src/core/types.cpp
