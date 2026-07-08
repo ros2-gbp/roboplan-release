@@ -1,0 +1,102 @@
+ros-lyrical-roboplan (0.5.0-1trixie) trixie; urgency=high
+
+  * Add unit tests for roboplan_simple_ik package (#257 <https://github.com/open-planning/roboplan/issues/257>)
+  * Cartesian path planner (#240 <https://github.com/open-planning/roboplan/issues/240>)
+  * Make ConfigurationTask runtime tunable and add AccelerationLimit (#250 <https://github.com/open-planning/roboplan/issues/250>)
+  * Add broadphase culling to collision checking and self-collision barrier (#254 <https://github.com/open-planning/roboplan/issues/254>)
+  * Add clang-tidy (#182 <https://github.com/open-planning/roboplan/issues/182>)
+  * Store list of link names in group info (#253 <https://github.com/open-planning/roboplan/issues/253>)
+  * Add RRT* and fast-return mode (#246 <https://github.com/open-planning/roboplan/issues/246>)
+  * add base frame support to Jacobian (#238 <https://github.com/open-planning/roboplan/issues/238>)
+  * Allow overriding joint position limits in YAML config (#242 <https://github.com/open-planning/roboplan/issues/242>)
+  * support accel + jerk limits in urdf>=1.2  (#235 <https://github.com/open-planning/roboplan/issues/235>)
+  * Speed up path shortcutting (#236 <https://github.com/open-planning/roboplan/issues/236>)
+  * Speed up collision checking and RRT (#232 <https://github.com/open-planning/roboplan/issues/232>)
+  * Minor improvements to SimpleIK and forward kinematics (#231 <https://github.com/open-planning/roboplan/issues/231>)
+  * Scene parsing and joint configuration clamping improvements (#228 <https://github.com/open-planning/roboplan/issues/228>)
+  * Contributors: Erik Holum, Muslim Alaran, Sebastian Castro, Sebastian Jahr
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Tue, 07 Jul 2026 04:00:00 -0000
+
+ros-lyrical-roboplan (0.4.0-1trixie) trixie; urgency=high
+
+  * Add Ubuntu 26.04 and ROS 2 Lyrical to CI (#215 <https://github.com/open-planning/roboplan/issues/215>)
+  * Add missing gtest and gmock deps in package.xmls (#223 <https://github.com/open-planning/roboplan/issues/223>)
+  * Modularize Python bindings (#221 <https://github.com/open-planning/roboplan/issues/221>)
+  * OInK self-collision barrier (#207 <https://github.com/open-planning/roboplan/issues/207>)
+  * Use native mimic joint functionality in Pinocchio (#214 <https://github.com/open-planning/roboplan/issues/214>)
+  * Support planar joints (#209 <https://github.com/open-planning/roboplan/issues/209>)
+  * Add Stretch4 model (#208 <https://github.com/open-planning/roboplan/issues/208>)
+  * Support Pinocchio 4.0 (#205 <https://github.com/open-planning/roboplan/issues/205>)
+  * Support dual end effectors in action chunk example (#204 <https://github.com/open-planning/roboplan/issues/204>)
+  * Support cylinder and mesh scene collision objects (#197 <https://github.com/open-planning/roboplan/issues/197>)
+  * Add CartesianTrajectory type (#203 <https://github.com/open-planning/roboplan/issues/203>)
+  * Fix bugs in collision object scene operations (#193 <https://github.com/open-planning/roboplan/issues/193>)
+  * Add SE3 low-pass filter C++ library and Python bindings (#180 <https://github.com/open-planning/roboplan/issues/180>)
+  * Contributors: Muslim Alaran, Ola Ghattas, Prajwal, Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Tue, 02 Jun 2026 04:00:00 -0000
+
+ros-lyrical-roboplan (0.3.0-1trixie) trixie; urgency=high
+
+  * Incorporate scene and joint groups into OInK (#177 <https://github.com/open-planning/roboplan/issues/177>)
+  * Add octree support (#139 <https://github.com/open-planning/roboplan/issues/139>)
+  * Add console_bridge to cmake (#172 <https://github.com/open-planning/roboplan/issues/172>)
+  * Add bisection option when checking collisions along path and optimize RRT visualization (#164 <https://github.com/open-planning/roboplan/issues/164>)
+  * Add scene methods to get joint limit vectors (#162 <https://github.com/open-planning/roboplan/issues/162>)
+  * Validate subgroup parsing order issues in SRDF (#157 <https://github.com/open-planning/roboplan/issues/157>)
+  * Fix position limits oink constraint for models with continuous joints (#147 <https://github.com/open-planning/roboplan/issues/147>)
+  * Contributors: Cihat Kurtuluş Altıparmak, Rafael A. Rojas, Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Sat, 18 Apr 2026 04:00:00 -0000
+
+ros-lyrical-roboplan (0.2.0-1trixie) trixie; urgency=high
+
+  * Fix usage of tinyxml2 and tl_expected dependencies (#124 <https://github.com/open-planning/roboplan/issues/124>)
+  * Optimal differential IK solver (#110 <https://github.com/open-planning/roboplan/issues/110>)
+  * Contributors: Sebastian Castro, Sebastian Jahr
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Mon, 16 Feb 2026 05:00:00 -0000
+
+ros-lyrical-roboplan (0.1.0-1trixie) trixie; urgency=high
+
+  * Add argument names and basic docstrings to Python bindings (#114 <https://github.com/open-planning/roboplan/issues/114>)
+  * Improve error reporting in scene_utils map access (#113 <https://github.com/open-planning/roboplan/issues/113>)
+  * Organize examples (#95 <https://github.com/open-planning/roboplan/issues/95>)
+  * More consts in the Scene member accessors and python tests (#94 <https://github.com/open-planning/roboplan/issues/94>)
+  * Add initial ReadTheDocs setup (#90 <https://github.com/open-planning/roboplan/issues/90>)
+  * Fix applyMimics binding by copying and returning a value (#88 <https://github.com/open-planning/roboplan/issues/88>)
+  * Allow setting collision pairs (#85 <https://github.com/open-planning/roboplan/issues/85>)
+  * Support collision objects in scene (#80 <https://github.com/open-planning/roboplan/issues/80>)
+  * Make example models locatable in Rviz (#82 <https://github.com/open-planning/roboplan/issues/82>)
+  * Add basic unit test for continuous and mimic joints (#75 <https://github.com/open-planning/roboplan/issues/75>)
+  * Support continuous joints in RRT and TOPP-RA (#73 <https://github.com/open-planning/roboplan/issues/73>)
+  * Ensure the sampled points are actually connectable in path shortcutting (#71 <https://github.com/open-planning/roboplan/issues/71>)
+  * Support joint groups (#64 <https://github.com/open-planning/roboplan/issues/64>)
+  * Add Kinova + Robotiq model, initial limited support for continuous and mimic joints (#59 <https://github.com/open-planning/roboplan/issues/59>)
+  * Reorder ament_cmake include in CMakeLists to resolve test and symlink install issues (#63 <https://github.com/open-planning/roboplan/issues/63>)
+  * Add an example model with two fr3s (#50 <https://github.com/open-planning/roboplan/issues/50>)
+  * Fix forward kinematics calc (#61 <https://github.com/open-planning/roboplan/issues/61>)
+  * Create map of frame names to IDs in Scene (#58 <https://github.com/open-planning/roboplan/issues/58>)
+  * Organize Python bindings (#51 <https://github.com/open-planning/roboplan/issues/51>)
+  * Fix path shortcutting logic (#46 <https://github.com/open-planning/roboplan/issues/46>)
+  * Specify acceleration and jerk limits through YAML config file (#45 <https://github.com/open-planning/roboplan/issues/45>)
+  * TOPP-RA path parameterization (#42 <https://github.com/open-planning/roboplan/issues/42>)
+  * Add tl::expected wrapping (#36 <https://github.com/open-planning/roboplan/issues/36>)
+  * Add path shortening utils and consolidate examples (#33 <https://github.com/open-planning/roboplan/issues/33>)
+  * Visualize RRTs with Viser (#25 <https://github.com/open-planning/roboplan/issues/25>)
+  * Respect Joint Limits for Start and Goal Poses and Add Planning Timeout for RRT (#23 <https://github.com/open-planning/roboplan/issues/23>)
+  * First vanilla RRT implementation with dynotree (#16 <https://github.com/open-planning/roboplan/issues/16>)
+  * Add vanilla CMake workflow (#12 <https://github.com/open-planning/roboplan/issues/12>)
+  * Test all active ROS distros (#11 <https://github.com/open-planning/roboplan/issues/11>)
+  * Collision checking functionality (#10 <https://github.com/open-planning/roboplan/issues/10>)
+  * Generate random positions from scene (#8 <https://github.com/open-planning/roboplan/issues/8>)
+  * Move models to roboplan_example_models package (#7 <https://github.com/open-planning/roboplan/issues/7>)
+  * Add basic unit testing pipeline (#5 <https://github.com/open-planning/roboplan/issues/5>)
+  * Add simple IK solver (#3 <https://github.com/open-planning/roboplan/issues/3>)
+  * Reorganize packages (#2 <https://github.com/open-planning/roboplan/issues/2>)
+  * Contributors: Catarina Pires, Erik Holum, Ola Ghattas, Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Mon, 19 Jan 2026 05:00:00 -0000
+
+
