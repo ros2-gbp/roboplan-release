@@ -59,17 +59,22 @@ int main(int /*argc*/, char* /*argv*/[]) {
   // Optionally include path shortcutting
   const auto include_shortcutting = true;
   if (include_shortcutting) {
-    const auto max_iters = 1000;
-    auto shortcutter = PathShortcutter(scene, "arm");
-    path = shortcutter.shortcut(path, options.collision_check_step_size, max_iters);
+    PathShortcuttingOptions shortcutting_options;
+    shortcutting_options.group_name = "arm";
+    shortcutting_options.max_step_size = options.collision_check_step_size;
+    shortcutting_options.max_iters = 1000;
+    auto shortcutter = PathShortcutter(scene, shortcutting_options);
+    path = shortcutter.shortcut(path);
     std::cout << "Shortcutted path:\n" << path << std::endl;
   }
 
   // Set up TOPP-RA to time-parameterize the path
   std::cout << "Generating trajectory..." << std::endl;
-  const auto dt = 0.01;
   auto toppra = PathParameterizerTOPPRA(scene, "arm");
-  const auto maybe_traj = toppra.generate(path, dt, SplineFittingMode::Hermite);
+  TOPPRAOptions toppra_options;
+  toppra_options.dt = 0.01;
+  toppra_options.mode = SplineFittingMode::Hermite;
+  const auto maybe_traj = toppra.generate(path, toppra_options);
   if (!maybe_traj) {
     std::cout << "Failed to generate trajectory: " << maybe_traj.error() << std::endl;
   }
