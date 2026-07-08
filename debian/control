@@ -1,0 +1,12 @@
+Source: ros-rolling-roboplan
+Section: misc
+Priority: optional
+Maintainer: "Sebastian Castro" <sebas.a.castro@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), libeigen3-dev, libexpected-dev, libgmock-dev <!nocheck>, libtinyxml2-dev, nanobind-dev, ros-rolling-ament-cmake, ros-rolling-ament-cmake-gmock <!nocheck>, ros-rolling-ament-cmake-pytest <!nocheck>, ros-rolling-ament-cmake-python, ros-rolling-pinocchio, ros-rolling-roboplan-example-models <!nocheck>, ros-rolling-yaml-cpp-vendor, ros-rolling-ros-workspace
+Homepage: https://index.ros.org/p/roboplan/#rolling
+Standards-Version: 3.9.2
+
+Package: ros-rolling-roboplan
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libeigen3-dev, libexpected-dev, libtinyxml2-dev, nanobind-dev, ros-rolling-pinocchio, ros-rolling-yaml-cpp-vendor, ros-rolling-ros-workspace
+Description: Core types, scene representation, and utilities for RoboPlan.
