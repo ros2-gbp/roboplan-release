@@ -20,13 +20,13 @@ struct JointConfiguration {
   std::vector<std::string> joint_names;
 
   /// @brief The joint positions, in the same order as the names.
-  Eigen::VectorXd positions;
+  Eigen::VectorXd positions = Eigen::VectorXd();
 
   /// @brief The joint velocities, in the same order as the names.
-  Eigen::VectorXd velocities;
+  Eigen::VectorXd velocities = Eigen::VectorXd();
 
   /// @brief The joint accelerations, in the same order as the names.
-  Eigen::VectorXd accelerations;
+  Eigen::VectorXd accelerations = Eigen::VectorXd();
 };
 
 /// @brief Represents a robot Cartesian configuration.
@@ -117,6 +117,13 @@ struct JointGroupInfo {
 
   /// @brief The joint indices in the group.
   std::vector<size_t> joint_indices;
+
+  /// @brief The link (body) names that make up the group.
+  /// @details This includes the links driven by the group's joints (e.g., the links along a
+  /// chain, or the child links of the listed joints) as well as any links manually specified
+  /// via `<link>` elements inside the group in the SRDF. Useful for selecting the subset of
+  /// visual or collision geometry that belongs to a group.
+  std::vector<std::string> link_names;
 
   /// @brief The position vector indices in the group.
   Eigen::VectorXi q_indices;
