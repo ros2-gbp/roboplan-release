@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <roboplan/core/collision_context.hpp>
 #include <roboplan/core/path_utils.hpp>
 #include <roboplan/core/scene.hpp>
 #include <roboplan_example_models/resources.hpp>
@@ -14,16 +15,16 @@ protected:
     const auto srdf_path = model_prefix / "ur_robot_model" / "ur5_gripper.srdf";
     const std::vector<std::filesystem::path> package_paths = {
         example_models::get_package_share_dir()};
-    scene_ = std::make_shared<Scene>("test_scene", urdf_path, srdf_path, package_paths);
+    scene = std::make_shared<Scene>("test_scene", urdf_path, srdf_path, package_paths);
   }
 
 public:
   // No default constructors, so must be pointers.
-  std::shared_ptr<Scene> scene_;
+  std::shared_ptr<Scene> scene;
 
   JointPath getTestPath(const size_t num_points) {
     JointPath test_path;
-    test_path.joint_names = scene_->getJointNames();
+    test_path.joint_names = scene->getJointNames();
 
     if (num_points == 0)
       return test_path;
@@ -52,26 +53,35 @@ public:
 
 TEST_F(RoboPlanPathUtilsTest, testHasCollisionsAlongPath) {
   // Ensures all the samples are the same, since linear vs. bisection can differ in some cases.
-  scene_->setRngSeed(1234);
+  scene->setRngSeed(1234);
   for (auto idx = 0; idx < 10; ++idx) {
-    const auto maybe_q_start = scene_->randomCollisionFreePositions();
+    const auto maybe_q_start = scene->randomCollisionFreePositions();
     ASSERT_TRUE(maybe_q_start.has_value());
     const auto& q_start = maybe_q_start.value();
-    const auto maybe_q_end = scene_->randomCollisionFreePositions();
+    const auto maybe_q_end = scene->randomCollisionFreePositions();
     ASSERT_TRUE(maybe_q_end.has_value());
     const auto& q_end = maybe_q_end.value();
 
     const auto max_step_size = 0.05;
-    const auto result_linear =
-        hasCollisionsAlongPath(*scene_, q_start, q_end, max_step_size, /* bisection*/ false);
-    const auto result_bisection =
-        hasCollisionsAlongPath(*scene_, q_start, q_end, max_step_size, /* bisection*/ true);
+    const CollisionContext collision_context(*scene);
+    const auto result_linear = hasCollisionsAlongPath(*scene, collision_context, q_start, q_end,
+                                                      max_step_size, /* bisection*/ false);
+    const auto result_bisection = hasCollisionsAlongPath(*scene, collision_context, q_start, q_end,
+                                                         max_step_size, /* bisection*/ true);
     ASSERT_EQ(result_linear, result_bisection);
+
+    // The Scene-only overload (which uses the Scene's own collision scratch) must agree with the
+    // CollisionContext overload.
+    const auto result_scene =
+        hasCollisionsAlongPath(*scene, q_start, q_end, max_step_size, /* bisection*/ false);
+    ASSERT_EQ(result_linear, result_scene);
   }
 }
 
 TEST_F(RoboPlanPathUtilsTest, testGetPathLengths) {
-  auto shortcutter = PathShortcutter(scene_, "arm");
+  PathShortcuttingOptions options;
+  options.group_name = "arm";
+  auto shortcutter = PathShortcutter(scene, options);
 
   JointPath path = getTestPath(2);
   const auto path_lengths_maybe = shortcutter.getPathLengths(path);
@@ -83,7 +93,9 @@ TEST_F(RoboPlanPathUtilsTest, testGetPathLengths) {
 }
 
 TEST_F(RoboPlanPathUtilsTest, testGetNormalizedPathScaling) {
-  auto shortcutter = PathShortcutter(scene_, "arm");
+  PathShortcuttingOptions options;
+  options.group_name = "arm";
+  auto shortcutter = PathShortcutter(scene, options);
 
   JointPath empty_path = getTestPath(0);
   auto empty_scalings_maybe = shortcutter.getNormalizedPathScaling(empty_path);
@@ -106,7 +118,9 @@ TEST_F(RoboPlanPathUtilsTest, testGetNormalizedPathScaling) {
 }
 
 TEST_F(RoboPlanPathUtilsTest, testGetConfigurationFromNormalizedPathScaling) {
-  auto shortcutter = PathShortcutter(scene_, "arm");
+  PathShortcuttingOptions options;
+  options.group_name = "arm";
+  auto shortcutter = PathShortcutter(scene, options);
 
   auto test_path = getTestPath(3);
   auto path_scalings = shortcutter.getNormalizedPathScaling(test_path).value();
@@ -128,17 +142,64 @@ TEST_F(RoboPlanPathUtilsTest, testGetConfigurationFromNormalizedPathScaling) {
 }
 
 TEST_F(RoboPlanPathUtilsTest, testShortcutPath) {
-  auto shortcutter = PathShortcutter(scene_, "arm");
+  PathShortcuttingOptions options;
+  options.group_name = "arm";
+  options.max_step_size = 0.25;
+  options.seed = 11235;
+  auto shortcutter = PathShortcutter(scene, options);
 
   // This path can actually be made shorter
   auto test_path = getTestPath(4);
-  auto shortened_path =
-      shortcutter.shortcut(test_path, 0.25, /* max_iters */ 100, /* seed */ 11235);
+  auto shortened_path = shortcutter.shortcut(test_path);
 
   // Verify the shortcut path length is strictly less than the original.
   const auto orig_path_lengths = shortcutter.getPathLengths(test_path).value();
   const auto new_path_lengths = shortcutter.getPathLengths(shortened_path).value();
   ASSERT_GT(orig_path_lengths.tail(1)(0), new_path_lengths.tail(1)(0));
+}
+
+TEST_F(RoboPlanPathUtilsTest, testShortcutRemovesRedundantVertices) {
+  PathShortcuttingOptions options;
+  options.group_name = "arm";
+  options.max_step_size = 0.25;
+  options.seed = 11235;
+  auto shortcutter = PathShortcutter(scene, options);
+
+  // A straight, collision-free path with several collinear interior waypoints. Every interior
+  // vertex is redundant, so the redundant-vertex removal pass should collapse the path down to
+  // just its two endpoints regardless of the random sampling.
+  JointPath collinear_path;
+  collinear_path.joint_names = scene->getJointNames();
+  for (double value : {0.0, 0.2, 0.4, 0.6, 0.8, 1.0}) {
+    Eigen::VectorXd q = Eigen::VectorXd::Zero(6);
+    q(0) = value;
+    collinear_path.positions.push_back(q);
+  }
+
+  auto shortened_path = shortcutter.shortcut(collinear_path);
+
+  ASSERT_EQ(shortened_path.positions.size(), 2u);
+  EXPECT_DOUBLE_EQ(shortened_path.positions.front()(0), 0.0);
+  EXPECT_DOUBLE_EQ(shortened_path.positions.back()(0), 1.0);
+}
+
+TEST_F(RoboPlanPathUtilsTest, testShortcutConvergenceStopsEarly) {
+  PathShortcuttingOptions options;
+  options.group_name = "arm";
+  options.max_step_size = 0.25;
+  options.max_iters = 1000;
+  options.seed = 11235;
+  options.max_convergence_iters = 5;
+  auto shortcutter = PathShortcutter(scene, options);
+
+  // With a small convergence window, an already-straight path (no possible improvement) should
+  // return quickly without error, still preserving its endpoints.
+  auto test_path = getTestPath(4);
+  auto shortened_path = shortcutter.shortcut(test_path);
+
+  ASSERT_GE(shortened_path.positions.size(), 2u);
+  EXPECT_DOUBLE_EQ(shortened_path.positions.front()(0), test_path.positions.front()(0));
+  EXPECT_DOUBLE_EQ(shortened_path.positions.back()(0), test_path.positions.back()(0));
 }
 
 }  // namespace roboplan

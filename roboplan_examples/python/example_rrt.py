@@ -11,10 +11,15 @@ import pinocchio as pin
 from pinocchio.visualize import ViserVisualizer
 
 from common import get_model_data, get_octree
-from roboplan.core import JointConfiguration, PathShortcutter, Scene
+from roboplan.core import (
+    JointConfiguration,
+    PathShortcutter,
+    PathShortcuttingOptions,
+    Scene,
+)
 from roboplan.example_models import get_package_share_dir
 from roboplan.rrt import RRTOptions, RRT, visualizeTree
-from roboplan.toppra import PathParameterizerTOPPRA, SplineFittingMode
+from roboplan.toppra import PathParameterizerTOPPRA, SplineFittingMode, TOPPRAOptions
 from roboplan.visualization import (
     visualizeJointTrajectory,
     visualizePath,
@@ -30,8 +35,11 @@ def main(
     collision_check_use_bisection: bool = False,
     goal_biasing_probability: float = 0.15,
     max_nodes: int = 1000,
-    max_planning_time: float = 5.0,
+    max_planning_time: float = 2.0,
     rrt_connect: bool = False,
+    rrt_star: bool = False,
+    rewire_distance: float = 5.0,
+    fast_return: bool = True,
     include_shortcutting: bool = False,
     max_shortcutting_iters: int = 100,
     toppra_mode: SplineFittingMode = SplineFittingMode.Adaptive,
@@ -54,6 +62,9 @@ def main(
         max_nodes: The maximum number of nodes to add to the search tree.
         max_planning_time: The maximum time (in seconds) to search for a path.
         rrt_connect: Whether or not to use RRT-Connect.
+        rrt_star: Whether or not to use RRT*, which keeps optimizing until the node or time budget is exhausted and returns the lowest-cost path. Can be combined with `rrt_connect`.
+        rewire_distance: The configuration-space radius used to find neighbors for RRT* rewiring (only used when `rrt_star` is true). Should generally be at least `max_connection_distance`.
+        fast_return: If true, return on the first path found; if false, plan until the node or time budget is exhausted and return the lowest-cost path. Set to false to get RRT*'s asymptotically optimal behavior.
         include_shortcutting: Whether or not to include path shortcutting for found paths.
         max_shortcutting_iters: The maximum number of path shortcutting iterations.
         toppra_mode: The trajectory generation mode for TOPP-RA. Can be `Hermite`, `Cubic`, or `Adaptive` (default).
@@ -123,6 +134,9 @@ def main(
         goal_biasing_probability=goal_biasing_probability,
         max_planning_time=max_planning_time,
         rrt_connect=rrt_connect,
+        rrt_star=rrt_star,
+        rewire_distance=rewire_distance,
+        fast_return=fast_return,
     )
     rrt = RRT(scene, options)
 
@@ -130,7 +144,12 @@ def main(
     traj_dt = 0.01
 
     if include_shortcutting:
-        shortcutter = PathShortcutter(scene, model_data.default_joint_group)
+        shortcutting_options = PathShortcuttingOptions(
+            group_name=model_data.default_joint_group,
+            max_step_size=options.collision_check_step_size,
+            max_iters=max_shortcutting_iters,
+        )
+        shortcutter = PathShortcutter(scene, shortcutting_options)
 
     traj_queue = queue.Queue()
     cur_traj = None
@@ -175,18 +194,15 @@ def main(
         if include_shortcutting:
             print("Shortcutting path...")
             t_start = time.time()
-            shortened_path = shortcutter.shortcut(
-                path,
-                max_step_size=options.collision_check_step_size,
-                max_iters=max_shortcutting_iters,
-            )
+            shortened_path = shortcutter.shortcut(path)
             print(f"Shortcutted path in {time.time() - t_start:.3f} s")
 
         # Set up TOPP-RA to time-parameterize the path
         print("Generating trajectory...")
         t_start = time.time()
         traj = toppra.generate(
-            shortened_path if include_shortcutting else path, traj_dt, toppra_mode
+            shortened_path if include_shortcutting else path,
+            TOPPRAOptions(dt=traj_dt, mode=toppra_mode),
         )
         print(f"Generated trajectory in {time.time() - t_start:.3f} s")
 
@@ -254,7 +270,9 @@ def main(
         if not traj_queue.empty():
             plt.clf()
             cur_traj = traj_queue.get()
-            fig = plotJointTrajectory(cur_traj, scene)
+            fig = plotJointTrajectory(
+                cur_traj, scene, group_name=model_data.default_joint_group
+            )
             plt.draw()
             fig.canvas.draw()
             fig.canvas.flush_events()
