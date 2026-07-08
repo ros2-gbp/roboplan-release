@@ -35,6 +35,7 @@ The joint configuration is updated via integration:
 - Supports multiple simultaneous goal frames
 - Collision checking with random restarts on failure
 - Convergence monitoring based on separate linear and angular error thresholds
+- Optionally attempt to find a nearest solution to the seed until the timeout is reached
 
 Configuration
 ^^^^^^^^^^^^^
@@ -46,11 +47,11 @@ Configuration
 +-----------------------------+--------------------------------------+-----------+
 | ``max_iters``               | Maximum iterations per attempt       | 100       |
 +-----------------------------+--------------------------------------+-----------+
-| ``max_time``                | Maximum computation time (seconds)   | 0.01      |
+| ``max_time``                | Maximum computation time (seconds)   | 0.005     |
 +-----------------------------+--------------------------------------+-----------+
 | ``max_restarts``            | Number of random restarts on failure | 2         |
 +-----------------------------+--------------------------------------+-----------+
-| ``step_size``               | Integration step size                | 0.01      |
+| ``step_size``               | Integration step size                | 0.25      |
 +-----------------------------+--------------------------------------+-----------+
 | ``damping``                 | Damping factor :math:`\lambda`       | 0.001     |
 +-----------------------------+--------------------------------------+-----------+
@@ -59,6 +60,8 @@ Configuration
 | ``max_angular_error_norm``  | Convergence threshold (radians)      | 0.001     |
 +-----------------------------+--------------------------------------+-----------+
 | ``check_collisions``        | Enable collision checking            | true      |
++-----------------------------+--------------------------------------+-----------+
+| ``fast_return``             | Return the first solution found.     | true      |
 +-----------------------------+--------------------------------------+-----------+
 
 Usage Example
@@ -94,6 +97,8 @@ Usage Example
    solution = JointConfiguration()
 
    success = ik_solver.solveIk(goal, start, solution)
+
+.. _oink-solver:
 
 OInK: Optimal Inverse Kinematics
 ---------------------------------
@@ -241,7 +246,7 @@ Tracks a target 6-DOF pose (position + orientation).
 ConfigurationTask
 """""""""""""""""
 
-Drives toward a target joint configuration (null-space regularization).
+Drives toward a target joint configuration, or use as null-space regularization towards a nominal configuration.
 
 **Error:** Manifold-aware difference: :math:`e = \text{difference}(q, q_{\text{target}})`
 
@@ -343,6 +348,33 @@ Restricts motion based on distance to joint limits:
    -\gamma (q - q_{\min}) \leq \Delta q \leq \gamma (q_{\max} - q)
 
 The gain :math:`\gamma \in (0, 1]` controls aggressiveness. As :math:`q \to q_{\max}`, the upper bound :math:`\to 0`.
+
+AccelerationLimit
+"""""""""""""""""
+
+Bounds how fast the joint velocity may change between successive control steps, so the executed motion does not snap/jerk (unbounded acceleration). Inspired by `pink.limits.AccelerationLimit <https://github.com/stephane-caron/pink/blob/main/pink/limits/acceleration_limit.py>`_.
+
+It combines two box bounds on :math:`\Delta q` and takes the tighter per joint:
+
+**1. Finite-difference acceleration bound**, centered on the previous step's displacement :math:`\Delta q_{\text{prev}}`:
+
+.. math::
+
+   -a_{\max} \leq \frac{\Delta q / \Delta t - \Delta q_{\text{prev}} / \Delta t}{\Delta t} \leq a_{\max}
+   \quad \Longleftrightarrow \quad
+   \Delta q_{\text{prev}} - a_{\max} \Delta t^2 \leq \Delta q \leq \Delta q_{\text{prev}} + a_{\max} \Delta t^2
+
+**2. "Braking distance" toward the joint position limits**, so the velocity can always be brought to zero before reaching a limit (Flacco et al. 2015; Del Prete 2018):
+
+.. math::
+
+   -\Delta t \sqrt{2 a_{\max} (q - q_{\min})} \leq \Delta q \leq \Delta t \sqrt{2 a_{\max} (q_{\max} - q)}
+
+The previous displacement is :math:`\Delta q_{\text{prev}} = v_{\text{prev}} \cdot \Delta t`; call ``setLastVelocity(v_prev)`` once per control step (before solving) with the velocity that was just integrated, so the bound is centered on the latest velocity. An infinite ``a_max`` entry leaves that joint unconstrained.
+
+.. note::
+
+   This limit brakes toward joint **position limits**, not toward the **task target**. Because the IK is a reactive controller, a task that commands a velocity which cannot be decelerated within the remaining distance to its target will **overshoot**. Keep the commanded motion acceleration-feasible (e.g. smaller task gains, gentler references) when this matters.
 
 Barrier Details
 ^^^^^^^^^^^^^^^
@@ -507,6 +539,7 @@ Usage Example
    import numpy as np
    from roboplan.core import Scene, CartesianConfiguration
    from roboplan.optimal_ik import (
+       AccelerationLimit,
        ConfigurationTask, ConfigurationTaskOptions,
        FrameTask, FrameTaskOptions,
        Oink, PositionLimit, VelocityLimit,
@@ -547,6 +580,9 @@ Usage Example
    constraints = [
        PositionLimit(oink, gain=1.0),
        VelocityLimit(oink, dt, v_max=np.ones(nv)),
+       # Optional: bound joint acceleration. Call accel_limit.setLastVelocity(delta_q / dt)
+       # at the top of every control step (before solveIk) so the bound tracks the last velocity.
+       AccelerationLimit(oink, dt, a_max=np.full(nv, 5.0)),
    ]
 
    # Barriers (smooth safety).
