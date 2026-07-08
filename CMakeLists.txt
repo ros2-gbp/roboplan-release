@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(roboplan_simple_ik VERSION 0.4.0)
+project(roboplan_simple_ik VERSION 0.5.0)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -86,6 +86,13 @@ install(TARGETS roboplan_simple_ik
 option(BUILD_PYTHON_BINDINGS "Build the roboplan_simple_ik Python bindings" ON)
 if(BUILD_PYTHON_BINDINGS)
   add_subdirectory(bindings)
+endif()
+
+# Add the unit tests, if enabled.
+option(BUILD_TESTING "" ON)
+if (BUILD_TESTING)
+    enable_testing()
+    add_subdirectory(test)
 endif()
 
 # If ament_cmake is detected, export the package to be visible in ROS 2.
