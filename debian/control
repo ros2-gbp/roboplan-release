@@ -1,0 +1,12 @@
+Source: ros-jazzy-roboplan-toppra
+Section: misc
+Priority: optional
+Maintainer: "Sebastian Castro" <sebas.a.castro@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), nanobind-dev, ros-jazzy-ament-cmake, ros-jazzy-ament-cmake-gtest <!nocheck>, ros-jazzy-ament-cmake-python, ros-jazzy-roboplan, ros-jazzy-roboplan-example-models <!nocheck>, ros-jazzy-ros-workspace
+Homepage: https://index.ros.org/p/roboplan_toppra/#jazzy
+Standards-Version: 3.9.2
+
+Package: ros-jazzy-roboplan-toppra
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, nanobind-dev, ros-jazzy-roboplan, ros-jazzy-ros-workspace
+Description: Time Optimal Path Parameterization based on Reachability Analysis (TOPP-RA) wrapper for RoboPlan.
