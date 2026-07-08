@@ -15,6 +15,7 @@ from roboplan.filters import SE3LowPassFilter
 from roboplan.core import Scene, CartesianConfiguration
 from roboplan.example_models import get_package_share_dir
 from roboplan.optimal_ik import (
+    AccelerationLimit,
     ConfigurationTask,
     ConfigurationTaskOptions,
     FrameTask,
@@ -22,6 +23,7 @@ from roboplan.optimal_ik import (
     Oink,
     PositionLimit,
     SelfCollisionBarrier,
+    SelfCollisionBarrierOptions,
     VelocityLimit,
 )
 
@@ -30,12 +32,14 @@ def main(
     model: str = "ur5",
     task_gain: float = 1.0,
     lm_damping: float = 0.01,
-    regularization: float = 1e-6,
+    regularization: float = 1e-3,
     control_freq: float = 100.0,
     reference_filter_tau: float = 0.1,
     self_collision_num_pairs: int = 0,
     self_collision_d_min: float = 0.02,
+    self_collision_d_max: float = 0.25,
     self_collision_gain: float = 1.0,
+    limit_acceleration: bool = False,
     host: str = "localhost",
     port: str = "8000",
 ):
@@ -57,8 +61,13 @@ def main(
             that use high-resolution meshes for collision geometries.
         self_collision_d_min: Minimum distance (meters) the IK solver will try to keep
             between every pair of self-collision bodies declared by the SRDF.
+        self_collision_d_max: Maximum distance (meters) the IK solver will use for a
+            broadphase culling step. This can significantly speed up collision checking
+            by pruning out far-away meshes, especially if they have complex geometries.
         self_collision_gain: Barrier gain (gamma) for the self-collision barrier. Higher
             values produce stronger pushback as bodies approach `self_collision_d_min`.
+        limit_acceleration: If true, adds an acceleration limit.
+            Note that this can cause overshoot with sudden marker motions, though.
         host: The host for the ViserVisualizer.
         port: The port for the ViserVisualizer.
     """
@@ -131,6 +140,13 @@ def main(
 
     constraints = [position_limit, velocity_limit]
 
+    if limit_acceleration:
+        a_max = np.hstack(
+            [scene.getJointInfo(name).limits.max_acceleration for name in joint_names]
+        )
+        accel_limit = AccelerationLimit(oink, dt, a_max)
+        constraints.append(accel_limit)
+
     # Self-collision barrier: keep every collision pair in the model at least
     # `self_collision_d_min` meters apart. Skip when the model has no collision pairs.
     if self_collision_num_pairs > 0:
@@ -140,11 +156,14 @@ def main(
         self_collision_barrier = SelfCollisionBarrier(
             oink,
             scene,
-            n_collision_pairs=self_collision_num_pairs,
             dt=dt,
-            gain=self_collision_gain,
-            safe_displacement_gain=0.01,
-            d_min=self_collision_d_min,
+            options=SelfCollisionBarrierOptions(
+                n_collision_pairs=self_collision_num_pairs,
+                gain=self_collision_gain,
+                safe_displacement_gain=0.01,
+                d_min=self_collision_d_min,
+                d_max=self_collision_d_max,
+            ),
         )
         barriers = [self_collision_barrier]
     else:
@@ -240,8 +259,14 @@ def main(
     def control_loop():
         delta_q = np.zeros(num_variables)
         delta_q_full = np.zeros(model_pin.nv)
+        # Visualization is throttled and runs outside the scene lock so the Viser push to
+        # the browser cannot stretch the control period. The solver assumes a fixed dt, so
+        # keeping the control loop at a steady rate prevents jitter.
+        display_period = max(dt, 1.0 / 30.0)
+        last_display = 0.0
         while running:
             loop_start = time.time()
+            q_to_display = None
 
             # Thread-safe scene access for IK solving
             if not paused:
@@ -249,16 +274,32 @@ def main(
                     # Get current joint configuration
                     q_current = scene.getCurrentJointPositions()
 
+                    # Marker targets are in the world frame, but each FrameTask expects its
+                    # target expressed in the task's base frame. Convert using the base
+                    # frame's current world pose (identity when base_frame is "universe").
+                    base_T_world = np.linalg.inv(
+                        scene.forwardKinematics(q_current, model_data.base_link)
+                    )
+
                     # Update reference filters if enabled (smooths target pose changes)
                     # The filter gradually approaches the raw target to prevent sudden jumps
                     if reference_filter_tau > 0:
                         for idx, ref_filter in enumerate(reference_filters):
                             filtered_target = ref_filter.update(raw_targets[idx], dt)
-                            frame_tasks[idx].setTargetFrameTransform(filtered_target)
+                            frame_tasks[idx].setTargetFrameTransform(
+                                base_T_world @ filtered_target
+                            )
                     else:
                         # No filtering - use raw targets directly
                         for idx in range(len(frame_tasks)):
-                            frame_tasks[idx].setTargetFrameTransform(raw_targets[idx])
+                            frame_tasks[idx].setTargetFrameTransform(
+                                base_T_world @ raw_targets[idx]
+                            )
+
+                    # Center the acceleration bound on the previous step's velocity
+                    # (delta_q / dt) so the limit couples consecutive control steps.
+                    if limit_acceleration:
+                        accel_limit.setLastVelocity(delta_q / dt)
 
                     # Solve IK for one step with constraints (and the self-collision
                     # barrier when the model has collision pairs).
@@ -288,7 +329,22 @@ def main(
                         if isinstance(task, FrameTask):
                             scene.forwardKinematics(q_current, task.frame_name)
 
-                    viz.display(q_current)
+                    q_to_display = q_current
+            else:
+                # While paused (including just after a reset), hold the filter and
+                # last-velocity state at rest so resuming starts from zero velocity
+                # rather than replaying a stale displacement.
+                delta_q[:] = 0.0
+                delta_q_full[:] = 0.0
+
+            # Throttled visualization, outside the scene lock, so a slow browser push does
+            # not perturb the control-loop timing.
+            if (
+                q_to_display is not None
+                and (loop_start - last_display) >= display_period
+            ):
+                viz.display(q_to_display)
+                last_display = loop_start
 
             # Maintain control loop rate
             elapsed = time.time() - loop_start
