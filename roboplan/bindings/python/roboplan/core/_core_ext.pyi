@@ -200,6 +200,13 @@ class JointGroupInfo:
     def joint_indices(self, arg: Sequence[int], /) -> None: ...
 
     @property
+    def link_names(self) -> list[str]:
+        """The link (body) names that make up the group."""
+
+    @link_names.setter
+    def link_names(self, arg: Sequence[str], /) -> None: ...
+
+    @property
     def q_indices(self) -> Annotated[NDArray[numpy.int32], dict(shape=(None,), order='C')]:
         """The position vector indices in the group."""
 
@@ -424,10 +431,13 @@ class Scene:
     def hasCollisions(self, q: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], debug: bool = False) -> bool:
         """Checks collisions at specified joint positions."""
 
-    def isValidPose(self, q: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]) -> bool:
+    def isValidConfiguration(self, q: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]) -> bool:
         """
         Checks if the specified joint positions are valid with respect to joint limits.
         """
+
+    def clampToValidConfiguration(self, q: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]) -> Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]:
+        """Clamps the specified joint positions to valid joint limits."""
 
     def toFullJointPositions(self, group_name: str, q: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]) -> Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]:
         """Converts partial joint positions to full joint positions."""
@@ -440,11 +450,16 @@ class Scene:
         Integrates a velocity vector from a configuration using Lie group operations.
         """
 
-    def forwardKinematics(self, q: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], frame_name: str) -> Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')]:
+    def forwardKinematics(self, q: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], frame_name: str, base_frame: str = '') -> Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')]:
         """Calculates forward kinematics for a specific frame."""
 
     def computeFrameJacobian(self, q: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], frame_name: str, local: bool = True) -> Annotated[NDArray[numpy.float64], dict(shape=(None, None), order='F')]:
-        """Computes the frame Jacobian for a specific frame."""
+        """
+        Computes the frame Jacobian for a specific frame, expressed in world frame.
+        """
+
+    def computeRelativeFrameJacobian(self, q: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], frame_name: str, base_frame: str, local: bool = True) -> Annotated[NDArray[numpy.float64], dict(shape=(None, None), order='F')]:
+        """Computes the Jacobian of a frame's velocity relative to a base frame."""
 
     def getFrameId(self, name: str) -> int:
         """Get the Pinocchio model ID of a frame by its name."""
@@ -521,15 +536,73 @@ def computeFramePath(scene: Scene, q_vec: Sequence[Annotated[NDArray[numpy.float
     Computes the Cartesian path of a specified frame using a vector of provided points.
     """
 
-def hasCollisionsAlongPath(scene: Scene, q_start: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], q_end: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], max_step_size: float, bisection: bool = False) -> bool:
-    """Checks collisions along a specified configuration space path."""
+def hasCollisionsAlongPath(scene: Scene, q_start: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], q_end: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], max_step_size: float, bisection: bool = False, check_endpoints: bool = True) -> bool:
+    """
+    Checks collisions along a specified configuration space path. Uses the Scene's own collision scratch, so it is not safe to call concurrently with other queries on the same Scene.
+    """
+
+def computePathLength(scene: Scene, group_name: str, path: JointPath) -> float:
+    """Computes the total configuration-space length of a joint path."""
+
+class PathShortcuttingOptions:
+    """Options struct for path shortcutting."""
+
+    def __init__(self, group_name: str = '', max_step_size: float = 0.05, max_iters: int = 100, seed: int = 0, max_convergence_iters: int = 20, redundant_removal_iters: int = 20) -> None: ...
+
+    @property
+    def group_name(self) -> str:
+        """The joint group name to be used for path shortcutting."""
+
+    @group_name.setter
+    def group_name(self, arg: str, /) -> None: ...
+
+    @property
+    def max_step_size(self) -> float:
+        """
+        Maximum step size used in collision checking, and the minimum separable distance between points in a shortcut.
+        """
+
+    @max_step_size.setter
+    def max_step_size(self, arg: float, /) -> None: ...
+
+    @property
+    def max_iters(self) -> int:
+        """Maximum number of iterations of random sampling."""
+
+    @max_iters.setter
+    def max_iters(self, arg: int, /) -> None: ...
+
+    @property
+    def seed(self) -> int:
+        """Seed for the random generator. If < 0, a random seed is used."""
+
+    @seed.setter
+    def seed(self, arg: int, /) -> None: ...
+
+    @property
+    def max_convergence_iters(self) -> int:
+        """
+        Stop early once this many consecutive iterations fail to apply a shortcut. A value of 0 disables early stopping.
+        """
+
+    @max_convergence_iters.setter
+    def max_convergence_iters(self, arg: int, /) -> None: ...
+
+    @property
+    def redundant_removal_iters(self) -> int:
+        """
+        Cadence (in iterations) at which to interleave the redundant-vertex removal pass that cleans up the micro-segments introduced by shortcutting.
+        """
+
+    @redundant_removal_iters.setter
+    def redundant_removal_iters(self, arg: int, /) -> None: ...
 
 class PathShortcutter:
     """Shortcuts joint paths with random sampling and checking connections."""
 
-    def __init__(self, scene: Scene, group_name: str) -> None: ...
+    def __init__(self, scene: Scene, options: PathShortcuttingOptions) -> None: ...
 
-    def shortcut(self, path: JointPath, max_step_size: float, max_iters: int = 100, seed: int = 0) -> JointPath:
+    def shortcut(self, path: JointPath) -> JointPath:
         """Attempts to shortcut a specified path."""
 
     def getPathLengths(self, path: JointPath) -> Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]:
@@ -542,6 +615,16 @@ class PathShortcutter:
 
     def getConfigurationfromNormalizedPathScaling(self, path: JointPath, path_scalings: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], value: float) -> tuple[Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], int]:
         """Gets joint configurations from a path with normalized joint scalings."""
+
+def poseError(a: Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')], b: Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')]) -> tuple[float, float]:
+    """
+    Computes the (position error [m], orientation error [rad]) between two SE(3) transforms expressed in the same frame.
+    """
+
+def interpolatePose(start: Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')], end: Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')], fraction: float) -> Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')]:
+    """
+    Interpolates between two SE(3) transforms: linear in position, SLERP in orientation.
+    """
 
 def collapseContinuousJointPositions(scene: Scene, group_name: str, q_orig: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]) -> Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]:
     """

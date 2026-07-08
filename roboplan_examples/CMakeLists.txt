@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(roboplan_examples VERSION 0.4.0)
+project(roboplan_examples VERSION 0.5.0)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -12,6 +12,7 @@ find_package(roboplan_simple_ik REQUIRED)
 find_package(roboplan_oink REQUIRED)
 find_package(roboplan_rrt REQUIRED)
 find_package(roboplan_toppra REQUIRED)
+find_package(roboplan_cartesian_planning REQUIRED)
 
 # Ament CMake is not immediately required, but we include it at the top so that
 # if it is found we can use it in build testing before requiring a
