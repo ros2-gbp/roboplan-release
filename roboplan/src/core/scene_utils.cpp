@@ -1,8 +1,47 @@
+#include <cmath>
+#include <iostream>
+#include <limits>
+#include <optional>
 #include <stdexcept>
+#include <unordered_set>
 
 #include <tinyxml2.h>
 
 #include <roboplan/core/scene_utils.hpp>
+
+namespace {
+
+/// @brief Returns whether the given velocity-space DOF index of a joint is free-rotating.
+/// @details These are the unbounded orientation DOFs for which position limits are meaningless:
+/// the single DOF of a continuous joint, the rotational DOF of a planar joint, and the three
+/// rotational DOFs of a floating joint. Position limit indices follow the velocity (tangent)
+/// space, so a continuous DOF collapses to a single index here.
+bool isFreeRotatingDof(roboplan::JointType type, int dof) {
+  switch (type) {
+  case roboplan::JointType::CONTINUOUS:
+    return dof == 0;
+  case roboplan::JointType::PLANAR:
+    return dof == 2;  // (x, y, theta) -> theta is free-rotating.
+  case roboplan::JointType::FLOATING:
+    return dof >= 3;  // (x, y, z, rx, ry, rz) -> the rotational DOFs are free-rotating.
+  default:
+    return false;
+  }
+}
+
+/// @brief Maps an infinite position limit to the finite sentinel used to denote "unbounded".
+/// @details JointInfo represents an unbounded position limit as
+/// std::numeric_limits<double>::lowest() / max() (see the JointInfo constructor), not as
+/// +/-infinity. A user-supplied '.inf' / '-.inf' is normalized to these sentinels so that an
+/// overridden unbounded limit is represented identically to the default unbounded limit.
+double sanitizePositionLimit(double value) {
+  if (std::isinf(value)) {
+    return value > 0.0 ? std::numeric_limits<double>::max() : std::numeric_limits<double>::lowest();
+  }
+  return value;
+}
+
+}  // namespace
 
 namespace roboplan {
 
@@ -10,7 +49,14 @@ std::unordered_map<std::string, pinocchio::FrameIndex>
 createFrameMap(const pinocchio::Model& model) {
   std::unordered_map<std::string, pinocchio::FrameIndex> frame_map;
   for (const auto& frame : model.frames) {
-    frame_map[frame.name] = model.getFrameId(frame.name);
+    auto it = frame_map.find(frame.name);
+    if (it != frame_map.end()) {
+      throw std::runtime_error(
+          "Frame name '" + frame.name +
+          "' was already added to the map. Duplicate names for different frame types (body, joint, "
+          "sensor, etc.) are not supported in RoboPlan.");
+    }
+    frame_map[frame.name] = model.getFrameId(frame.name, frame.type);
   }
   return frame_map;
 }
@@ -37,11 +83,22 @@ std::unordered_map<std::string, JointGroupInfo> createJointGroupInfo(const pinoc
 
     JointGroupInfo group_info;
 
-    // There are a few valid elements in groups: "joint", "chain", and "group".
+    // Accumulate the group's links in a set so duplicates collapse automatically.
+    std::unordered_set<std::string> link_name_set;
+
+    // There are a few valid elements in groups: "link", "joint", "chain", and "group".
     for (tinyxml2::XMLElement* child = group->FirstChildElement(); child != nullptr;
          child = child->NextSiblingElement()) {
       const std::string elem_name = child->Name();
-      if (elem_name == "joint") {
+      if (elem_name == "link") {
+        // Links can be manually specified to be part of a group in the SRDF.
+        const char* link_name;
+        if (child->QueryStringAttribute("name", &link_name) != tinyxml2::XML_SUCCESS) {
+          throw std::runtime_error("Group '" + std::string(name) +
+                                   "' specifies a link with no name in the SRDF!");
+        }
+        link_name_set.insert(link_name);
+      } else if (elem_name == "joint") {
         // The joint case is straightforward; just add the joint name.
         const char* joint_name;
         if (child->QueryStringAttribute("name", &joint_name) != tinyxml2::XML_SUCCESS) {
@@ -70,10 +127,18 @@ std::unordered_map<std::string, JointGroupInfo> createJointGroupInfo(const pinoc
 
         auto cur_frame_id = model.getFrameId(tip_link);
         const auto base_frame_id = model.getFrameId(base_link);
+        const auto base_link_parent_joint_id = model.frames.at(base_frame_id).parentJoint;
         std::vector<int> joint_indices;
         while (true) {
           const auto& frame = model.frames.at(cur_frame_id);
           const auto parent_joint_id = frame.parentJoint;
+
+          // Sometimes the parent frame of a joint is rigidly attached to the chain's base link,
+          // but is not the parent frame itself, so we should check that as well.
+          if (parent_joint_id == base_link_parent_joint_id) {
+            break;
+          }
+
           const auto& parent_joint_name = model.names.at(parent_joint_id);
           joint_indices.push_back(parent_joint_id);
           cur_frame_id = model.frames.at(model.getFrameId(parent_joint_name)).parentFrame;
@@ -81,8 +146,8 @@ std::unordered_map<std::string, JointGroupInfo> createJointGroupInfo(const pinoc
             break;
           }
           if (cur_frame_id == 0) {
-            throw std::runtime_error(
-                "Recursed the whole robot model and did not find the base frame!");
+            throw std::runtime_error("Recursed the whole robot model for chain in group '" +
+                                     std::string(name) + "' and did not find the base frame!");
           }
         }
         // Add the joint information in the reverse order.
@@ -111,8 +176,22 @@ std::unordered_map<std::string, JointGroupInfo> createJointGroupInfo(const pinoc
         group_info.joint_indices.insert(group_info.joint_indices.end(),
                                         subgroup_info.joint_indices.begin(),
                                         subgroup_info.joint_indices.end());
+        link_name_set.insert(subgroup_info.link_names.begin(), subgroup_info.link_names.end());
       }
     }
+
+    // Now that all the group's joints are known, collect the links that they drive.
+    // A single moving joint can support multiple links: the link it actuates plus any links rigidly
+    // attached to it through fixed joints, which Pinocchio collapses into the same parent joint.
+    for (const auto jid : group_info.joint_indices) {
+      for (const auto& frame : model.frames) {
+        if (frame.type == pinocchio::BODY && frame.parentJoint == jid) {
+          link_name_set.insert(frame.name);
+        }
+      }
+    }
+
+    group_info.link_names.assign(link_name_set.begin(), link_name_set.end());
 
     // Once we've defined all joint names in the group, compute the position and velocity indices.
     std::vector<int> q_indices;
@@ -179,9 +258,19 @@ std::unordered_map<std::string, JointGroupInfo> createJointGroupInfo(const pinoc
     }
   }
 
+  // The default group contains every link (body frame) in the model.
+  std::vector<std::string> all_link_names;
+  all_link_names.reserve(model.nframes);
+  for (const auto& frame : model.frames) {
+    if (frame.type == pinocchio::BODY) {
+      all_link_names.push_back(frame.name);
+    }
+  }
+
   joint_group_map[""] = JointGroupInfo{
       .joint_names = std::vector<std::string>(model.names.begin() + 1, model.names.end()),
-      .joint_indices = all_joint_indices,
+      .joint_indices = std::move(all_joint_indices),
+      .link_names = std::move(all_link_names),
       .q_indices = Eigen::VectorXi::LinSpaced(model.nq, 0, model.nq - 1),
       .v_indices = Eigen::VectorXi::LinSpaced(model.nv, 0, model.nv - 1),
       .has_continuous_dofs = default_group_has_continuous_dofs,
@@ -349,6 +438,153 @@ Eigen::VectorXd jointPositionsWithMimicsFromPinocchio(const Scene& scene,
     }
   }
   return positions;
+}
+
+std::unordered_map<std::string, UrdfExtendedJointLimits>
+parseUrdfExtendedJointLimits(const std::string& urdf) {
+  std::unordered_map<std::string, UrdfExtendedJointLimits> result;
+
+  tinyxml2::XMLDocument doc;
+  if (doc.Parse(urdf.c_str()) != tinyxml2::XML_SUCCESS) {
+    return result;
+  }
+
+  const tinyxml2::XMLElement* robot = doc.FirstChildElement("robot");
+  if (!robot) {
+    return result;
+  }
+
+  for (const tinyxml2::XMLElement* joint = robot->FirstChildElement("joint"); joint;
+       joint = joint->NextSiblingElement("joint")) {
+    const char* name = joint->Attribute("name");
+    if (!name) {
+      continue;
+    }
+    const tinyxml2::XMLElement* limit = joint->FirstChildElement("limit");
+    if (!limit) {
+      continue;
+    }
+
+    UrdfExtendedJointLimits limits;
+    double val = 0.0;
+    if (limit->QueryDoubleAttribute("acceleration", &val) == tinyxml2::XML_SUCCESS) {
+      limits.acceleration = val;
+    }
+    if (limit->QueryDoubleAttribute("jerk", &val) == tinyxml2::XML_SUCCESS) {
+      limits.jerk = val;
+    }
+    result.emplace(name, limits);
+  }
+
+  return result;
+}
+
+void overrideJointLimitsFromYaml(
+    const pinocchio::Model& model, const YAML::Node& yaml_config,
+    const std::unordered_map<std::string, UrdfExtendedJointLimits>& urdf_extended_limits,
+    const std::string& joint_name, JointInfo& info) {
+  const int nv = static_cast<int>(info.num_velocity_dofs);
+  // Starting index of this joint's DOFs in the model's velocity vector.
+  const auto v_start = model.idx_vs[model.getJointId(joint_name)];
+
+  // Override URDF limits if supplied in the YAML file.
+  std::optional<YAML::Node> maybe_min_pos_limits;
+  std::optional<YAML::Node> maybe_max_pos_limits;
+  std::optional<YAML::Node> maybe_vel_limits;
+  std::optional<YAML::Node> maybe_acc_limits;
+  std::optional<YAML::Node> maybe_jerk_limits;
+  if (yaml_config["joint_limits"] && yaml_config["joint_limits"][joint_name]) {
+    const auto& limits_config = yaml_config["joint_limits"][joint_name];
+    if (limits_config["min_position"]) {
+      maybe_min_pos_limits = limits_config["min_position"];
+      if (!maybe_min_pos_limits->IsSequence() ||
+          (maybe_min_pos_limits->size() != static_cast<size_t>(nv))) {
+        throw std::runtime_error("Minimum position limits for joint '" + joint_name +
+                                 "' must be a sequence of size " + std::to_string(nv) + ".");
+      }
+    }
+    if (limits_config["max_position"]) {
+      maybe_max_pos_limits = limits_config["max_position"];
+      if (!maybe_max_pos_limits->IsSequence() ||
+          (maybe_max_pos_limits->size() != static_cast<size_t>(nv))) {
+        throw std::runtime_error("Maximum position limits for joint '" + joint_name +
+                                 "' must be a sequence of size " + std::to_string(nv) + ".");
+      }
+    }
+    if (limits_config["max_velocity"]) {
+      maybe_vel_limits = limits_config["max_velocity"];
+      if (!maybe_vel_limits->IsSequence() ||
+          (maybe_vel_limits->size() != static_cast<size_t>(nv))) {
+        throw std::runtime_error("Velocity limits for joint '" + joint_name +
+                                 "' must be a sequence of size " + std::to_string(nv) + ".");
+      }
+    }
+    if (limits_config["max_acceleration"]) {
+      maybe_acc_limits = limits_config["max_acceleration"];
+      if (!maybe_acc_limits->IsSequence() ||
+          (maybe_acc_limits->size() != static_cast<size_t>(nv))) {
+        throw std::runtime_error("Acceleration limits for joint '" + joint_name +
+                                 "' must be a sequence of size " + std::to_string(nv) + ".");
+      }
+    }
+    if (limits_config["max_jerk"]) {
+      maybe_jerk_limits = limits_config["max_jerk"];
+      if (!maybe_jerk_limits->IsSequence() ||
+          (maybe_jerk_limits->size() != static_cast<size_t>(nv))) {
+        throw std::runtime_error("Jerk limits for joint '" + joint_name +
+                                 "' must be a sequence of size " + std::to_string(nv) + ".");
+      }
+    }
+  }
+  const auto urdf_extended_it = urdf_extended_limits.find(joint_name);
+  for (int idx = 0; idx < nv; ++idx) {
+    // Position limits are overridden per velocity-space DOF. For free-rotating DOFs (continuous
+    // joints and the orientation DOFs of planar/floating joints) a position limit is meaningless,
+    // so any finite override is discarded with a warning. Users should use '.inf' / '-.inf' to
+    // explicitly denote an unbounded position for these DOFs.
+    const bool is_free_dof = isFreeRotatingDof(info.type, idx);
+    bool discarded_pos_limit = false;
+    if (maybe_min_pos_limits) {
+      const double val = maybe_min_pos_limits.value()[idx].as<double>();
+      if (is_free_dof) {
+        discarded_pos_limit |= std::isfinite(val);
+      } else {
+        info.limits.min_position[idx] = sanitizePositionLimit(val);
+      }
+    }
+    if (maybe_max_pos_limits) {
+      const double val = maybe_max_pos_limits.value()[idx].as<double>();
+      if (is_free_dof) {
+        discarded_pos_limit |= std::isfinite(val);
+      } else {
+        info.limits.max_position[idx] = sanitizePositionLimit(val);
+      }
+    }
+    if (discarded_pos_limit) {
+      std::cout << "Warning: joint '" << joint_name
+                << "' has a free-rotating DOF (velocity-space index " << idx
+                << "); the specified position limit was discarded. Use '.inf' and '-.inf' in the "
+                   "YAML config to denote an unbounded position."
+                << std::endl;
+    }
+    if (maybe_vel_limits) {
+      info.limits.max_velocity[idx] = maybe_vel_limits.value()[idx].as<double>();
+    } else {
+      info.limits.max_velocity[idx] = model.velocityLimit(v_start + idx);
+    }
+    if (maybe_acc_limits) {
+      info.limits.max_acceleration[idx] = maybe_acc_limits.value()[idx].as<double>();
+    } else if (urdf_extended_it != urdf_extended_limits.end() &&
+               urdf_extended_it->second.acceleration.has_value()) {
+      info.limits.max_acceleration[idx] = urdf_extended_it->second.acceleration.value();
+    }
+    if (maybe_jerk_limits) {
+      info.limits.max_jerk[idx] = maybe_jerk_limits.value()[idx].as<double>();
+    } else if (urdf_extended_it != urdf_extended_limits.end() &&
+               urdf_extended_it->second.jerk.has_value()) {
+      info.limits.max_jerk[idx] = urdf_extended_it->second.jerk.value();
+    }
+  }
 }
 
 }  // namespace roboplan
