@@ -46,6 +46,14 @@ target_link_libraries(
   GTest::gtest_main
 )
 
+add_executable(test_urdf_extended_limits test_urdf_extended_limits.cpp)
+set_property(TARGET test_urdf_extended_limits PROPERTY CXX_STANDARD 20)
+target_link_libraries(
+  test_urdf_extended_limits
+  roboplan
+  GTest::gtest_main
+)
+
 # TODO: Define tests as a variable
 
 # If ament_gtest is detected, make the tests visible in ROS 2.
@@ -56,11 +64,13 @@ if ( ament_cmake_gtest_FOUND )
     ament_add_gtest_test(test_joints)
     ament_add_gtest_test(test_path_utils)
     ament_add_gtest_test(test_se3_low_pass_filter)
+    ament_add_gtest_test(test_urdf_extended_limits)
 else()
     include(GoogleTest)
-    gtest_discover_tests(test_types)
-    gtest_discover_tests(test_scene)
-    gtest_discover_tests(test_joints)
-    gtest_discover_tests(test_path_utils)
-    gtest_discover_tests(test_se3_low_pass_filter)
+    gtest_add_tests(TARGET test_types)
+    gtest_add_tests(TARGET test_scene)
+    gtest_add_tests(TARGET test_joints)
+    gtest_add_tests(TARGET test_path_utils)
+    gtest_add_tests(TARGET test_se3_low_pass_filter)
+    gtest_add_tests(TARGET test_urdf_extended_limits)
 endif()
