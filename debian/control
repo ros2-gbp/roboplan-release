@@ -1,0 +1,12 @@
+Source: ros-rolling-roboplan-example-models
+Section: misc
+Priority: optional
+Maintainer: "Sebastian Castro" <sebas.a.castro@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), nanobind-dev, ros-rolling-ament-cmake, ros-rolling-ament-cmake-python, ros-rolling-ros-workspace
+Homepage: https://index.ros.org/p/roboplan_example_models/#rolling
+Standards-Version: 3.9.2
+
+Package: ros-rolling-roboplan-example-models
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, nanobind-dev, ros-rolling-ros-workspace
+Description: Robot descriptions for RoboPlan testing and examples.
