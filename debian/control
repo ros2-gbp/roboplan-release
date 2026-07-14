@@ -1,0 +1,12 @@
+Source: ros-lyrical-roboplan-oink
+Section: misc
+Priority: optional
+Maintainer: "Sebastian Jahr" <sebastian.jahr@tuta.io>
+Build-Depends: debhelper (>= 9.0.0), libgmock-dev <!nocheck>, nanobind-dev, python3-dev, ros-lyrical-ament-cmake, ros-lyrical-ament-cmake-gmock <!nocheck>, ros-lyrical-ament-cmake-python, ros-lyrical-roboplan, ros-lyrical-roboplan-example-models <!nocheck>, ros-lyrical-ros-workspace
+Homepage: https://index.ros.org/p/roboplan_oink/#lyrical
+Standards-Version: 3.9.2
+
+Package: ros-lyrical-roboplan-oink
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-lyrical-roboplan, ros-lyrical-ros-workspace
+Description: OInK - Optimal Inverse Kinematics solver for RoboPlan.
