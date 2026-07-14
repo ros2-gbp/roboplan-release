@@ -1,0 +1,12 @@
+Source: ros-lyrical-roboplan-toppra
+Section: misc
+Priority: optional
+Maintainer: "Sebastian Castro" <sebas.a.castro@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), nanobind-dev, python3-dev, ros-lyrical-ament-cmake, ros-lyrical-ament-cmake-gtest <!nocheck>, ros-lyrical-ament-cmake-python, ros-lyrical-roboplan, ros-lyrical-roboplan-example-models <!nocheck>, ros-lyrical-toppra, ros-lyrical-ros-workspace
+Homepage: https://index.ros.org/p/roboplan_toppra/#lyrical
+Standards-Version: 3.9.2
+
+Package: ros-lyrical-roboplan-toppra
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-lyrical-roboplan, ros-lyrical-toppra, ros-lyrical-ros-workspace
+Description: Time Optimal Path Parameterization based on Reachability Analysis (TOPP-RA) wrapper for RoboPlan.
