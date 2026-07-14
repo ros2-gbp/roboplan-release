@@ -1,0 +1,64 @@
+ros-rolling-roboplan-toppra (0.5.1-1trixie) trixie; urgency=high
+
+  * Make nanobind-dev and python3-dev build dependencies in package.xml (#264 <https://github.com/open-planning/roboplan/issues/264>)
+  * Remove 'toppra' dependency conditions in package.xml (#263 <https://github.com/open-planning/roboplan/issues/263>)
+  * Contributors: Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Mon, 13 Jul 2026 04:00:00 -0000
+
+ros-rolling-roboplan-toppra (0.5.0-1trixie) trixie; urgency=high
+
+  * Add pixi Support for osx-arm64 and missing docs pages (#248 <https://github.com/open-planning/roboplan/issues/248>)
+  * Cartesian path planner (#240 <https://github.com/open-planning/roboplan/issues/240>)
+  * Add clang-tidy (#182 <https://github.com/open-planning/roboplan/issues/182>)
+  * Speed up collision checking and RRT (#232 <https://github.com/open-planning/roboplan/issues/232>)
+  * Contributors: Erik Holum, Sebastian Castro, Sebastian Jahr
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Tue, 07 Jul 2026 04:00:00 -0000
+
+ros-rolling-roboplan-toppra (0.4.0-1trixie) trixie; urgency=high
+
+  * Add missing gtest and gmock deps in package.xmls (#223 <https://github.com/open-planning/roboplan/issues/223>)
+  * Modularize Python bindings (#221 <https://github.com/open-planning/roboplan/issues/221>)
+  * Add toppra and nanobind-dev rosdep keys (#219 <https://github.com/open-planning/roboplan/issues/219>)
+  * Fix TOPPRA issues when using planar joints (#216 <https://github.com/open-planning/roboplan/issues/216>)
+  * Support Pinocchio 4.0 (#205 <https://github.com/open-planning/roboplan/issues/205>)
+  * Contributors: Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Tue, 02 Jun 2026 04:00:00 -0000
+
+ros-rolling-roboplan-toppra (0.3.0-1trixie) trixie; urgency=high
+
+  * Get toppra from binaries or FetchContent (#174 <https://github.com/open-planning/roboplan/issues/174>)
+  * Adaptive TOPP-RA trajectory generation (#166 <https://github.com/open-planning/roboplan/issues/166>)
+  * Add spline fitting options to TOPP-RA (#165 <https://github.com/open-planning/roboplan/issues/165>)
+  * Add scene methods to get joint limit vectors (#162 <https://github.com/open-planning/roboplan/issues/162>)
+  * Contributors: Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Sat, 18 Apr 2026 04:00:00 -0000
+
+ros-rolling-roboplan-toppra (0.2.0-1trixie) trixie; urgency=high
+
+  * Fix usage of tinyxml2 and tl_expected dependencies (#124 <https://github.com/open-planning/roboplan/issues/124>)
+  * Contributors: Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Mon, 16 Feb 2026 05:00:00 -0000
+
+ros-rolling-roboplan-toppra (0.1.0-1trixie) trixie; urgency=high
+
+  * Add argument names and basic docstrings to Python bindings (#114 <https://github.com/open-planning/roboplan/issues/114>)
+  * Organize examples (#95 <https://github.com/open-planning/roboplan/issues/95>)
+  * Add initial ReadTheDocs setup (#90 <https://github.com/open-planning/roboplan/issues/90>)
+  * Make example models locatable in Rviz (#82 <https://github.com/open-planning/roboplan/issues/82>)
+  * Support continuous joints in RRT and TOPP-RA (#73 <https://github.com/open-planning/roboplan/issues/73>)
+  * Support joint groups (#64 <https://github.com/open-planning/roboplan/issues/64>)
+  * Add Kinova + Robotiq model, initial limited support for continuous and mimic joints (#59 <https://github.com/open-planning/roboplan/issues/59>)
+  * Reorder ament_cmake include in CMakeLists to resolve test and symlink install issues (#63 <https://github.com/open-planning/roboplan/issues/63>)
+  * Organize Python bindings (#51 <https://github.com/open-planning/roboplan/issues/51>)
+  * Specify acceleration and jerk limits through YAML config file (#45 <https://github.com/open-planning/roboplan/issues/45>)
+  * TOPP-RA path parameterization (#42 <https://github.com/open-planning/roboplan/issues/42>)
+  * Contributors: Erik Holum, Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Mon, 19 Jan 2026 05:00:00 -0000
+
+
