@@ -1,0 +1,12 @@
+Source: ros-kilted-roboplan
+Section: misc
+Priority: optional
+Maintainer: "Sebastian Castro" <sebas.a.castro@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), libeigen3-dev, libexpected-dev, libgmock-dev <!nocheck>, nanobind-dev, python3-dev, ros-kilted-ament-cmake, ros-kilted-ament-cmake-gmock <!nocheck>, ros-kilted-ament-cmake-pytest <!nocheck>, ros-kilted-ament-cmake-python, ros-kilted-pinocchio, ros-kilted-roboplan-example-models <!nocheck>, ros-kilted-tinyxml2-vendor, ros-kilted-yaml-cpp-vendor, ros-kilted-ros-workspace
+Homepage: https://index.ros.org/p/roboplan/#kilted
+Standards-Version: 3.9.2
+
+Package: ros-kilted-roboplan
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libeigen3-dev, libexpected-dev, ros-kilted-pinocchio, ros-kilted-tinyxml2-vendor, ros-kilted-yaml-cpp-vendor, ros-kilted-ros-workspace
+Description: Core types, scene representation, and utilities for RoboPlan.
