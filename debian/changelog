@@ -1,0 +1,66 @@
+ros-kilted-roboplan-simple-ik (0.5.1-1noble) noble; urgency=high
+
+  * Make nanobind-dev and python3-dev build dependencies in package.xml (#264 <https://github.com/open-planning/roboplan/issues/264>)
+  * Fix SimpleIk return logic on timeout (#261 <https://github.com/open-planning/roboplan/issues/261>)
+  * Contributors: Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Mon, 13 Jul 2026 04:00:00 -0000
+
+ros-kilted-roboplan-simple-ik (0.5.0-1noble) noble; urgency=high
+
+  * Add unit tests for roboplan_simple_ik package (#257 <https://github.com/open-planning/roboplan/issues/257>)
+  * Store list of link names in group info (#253 <https://github.com/open-planning/roboplan/issues/253>)
+  * Speed up collision checking and RRT (#232 <https://github.com/open-planning/roboplan/issues/232>)
+  * Fix the example IK python script (#233 <https://github.com/open-planning/roboplan/issues/233>)
+  * Minor improvements to SimpleIK and forward kinematics (#231 <https://github.com/open-planning/roboplan/issues/231>)
+  * Contributors: Erik Holum, Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Tue, 07 Jul 2026 04:00:00 -0000
+
+ros-kilted-roboplan-simple-ik (0.4.0-1noble) noble; urgency=high
+
+  * Modularize Python bindings (#221 <https://github.com/open-planning/roboplan/issues/221>)
+  * Use native mimic joint functionality in Pinocchio (#214 <https://github.com/open-planning/roboplan/issues/214>)
+  * Support planar joints (#209 <https://github.com/open-planning/roboplan/issues/209>)
+  * Add Stretch4 model (#208 <https://github.com/open-planning/roboplan/issues/208>)
+  * Contributors: Ola Ghattas, Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Tue, 02 Jun 2026 04:00:00 -0000
+
+ros-kilted-roboplan-simple-ik (0.3.0-1noble) noble; urgency=high
+
+  * return true only when a valid solution found (#160 <https://github.com/open-planning/roboplan/issues/160>)
+  * Contributors: Matteo Villani
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Sat, 18 Apr 2026 04:00:00 -0000
+
+ros-kilted-roboplan-simple-ik (0.2.0-1noble) noble; urgency=high
+
+  * Separates 6D IK error tolerance into linear (meters) and angular (radians) components (#128 <https://github.com/open-planning/roboplan/issues/128>)
+  * Support multiple tip frames in simple IK (#125 <https://github.com/open-planning/roboplan/issues/125>)
+  * Contributors: Sanjeev, Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Mon, 16 Feb 2026 05:00:00 -0000
+
+ros-kilted-roboplan-simple-ik (0.1.0-1noble) noble; urgency=high
+
+  * Add argument names and basic docstrings to Python bindings (#114 <https://github.com/open-planning/roboplan/issues/114>)
+  * Add initial ReadTheDocs setup (#90 <https://github.com/open-planning/roboplan/issues/90>)
+  * Add collision checking, random restarts, and max time to simple IK solver (#86 <https://github.com/open-planning/roboplan/issues/86>)
+  * Support joint groups (#64 <https://github.com/open-planning/roboplan/issues/64>)
+  * Add Kinova + Robotiq model, initial limited support for continuous and mimic joints (#59 <https://github.com/open-planning/roboplan/issues/59>)
+  * Reorder ament_cmake include in CMakeLists to resolve test and symlink install issues (#63 <https://github.com/open-planning/roboplan/issues/63>)
+  * Create map of frame names to IDs in Scene (#58 <https://github.com/open-planning/roboplan/issues/58>)
+  * Fix IK example (#49 <https://github.com/open-planning/roboplan/issues/49>)
+  * Interactive IK example (#29 <https://github.com/open-planning/roboplan/issues/29>)
+  * First vanilla RRT implementation with dynotree (#16 <https://github.com/open-planning/roboplan/issues/16>)
+  * Test all active ROS distros (#11 <https://github.com/open-planning/roboplan/issues/11>)
+  * Collision checking functionality (#10 <https://github.com/open-planning/roboplan/issues/10>)
+  * Move models to roboplan_example_models package (#7 <https://github.com/open-planning/roboplan/issues/7>)
+  * Add basic unit testing pipeline (#5 <https://github.com/open-planning/roboplan/issues/5>)
+  * Add simple IK solver (#3 <https://github.com/open-planning/roboplan/issues/3>)
+  * Contributors: Catarina Pires, Erik Holum, Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Mon, 19 Jan 2026 05:00:00 -0000
+
+
