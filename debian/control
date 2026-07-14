@@ -1,0 +1,12 @@
+Source: ros-jazzy-roboplan
+Section: misc
+Priority: optional
+Maintainer: "Sebastian Castro" <sebas.a.castro@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), libeigen3-dev, libexpected-dev, libgmock-dev <!nocheck>, nanobind-dev, python3-dev, ros-jazzy-ament-cmake, ros-jazzy-ament-cmake-gmock <!nocheck>, ros-jazzy-ament-cmake-pytest <!nocheck>, ros-jazzy-ament-cmake-python, ros-jazzy-pinocchio, ros-jazzy-roboplan-example-models <!nocheck>, ros-jazzy-tinyxml2-vendor, ros-jazzy-yaml-cpp-vendor, ros-jazzy-ros-workspace
+Homepage: https://index.ros.org/p/roboplan/#jazzy
+Standards-Version: 3.9.2
+
+Package: ros-jazzy-roboplan
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libeigen3-dev, libexpected-dev, ros-jazzy-pinocchio, ros-jazzy-tinyxml2-vendor, ros-jazzy-yaml-cpp-vendor, ros-jazzy-ros-workspace
+Description: Core types, scene representation, and utilities for RoboPlan.
