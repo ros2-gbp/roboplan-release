@@ -1,0 +1,58 @@
+ros-jazzy-roboplan-oink (0.5.1-1noble) noble; urgency=high
+
+  * Make nanobind-dev and python3-dev build dependencies in package.xml (#264 <https://github.com/open-planning/roboplan/issues/264>)
+  * Contributors: Sebastian Castro
+
+ -- "Sebastian Jahr" <sebastian.jahr@tuta.io>  Mon, 13 Jul 2026 04:00:00 -0000
+
+ros-jazzy-roboplan-oink (0.5.0-1noble) noble; urgency=high
+
+  * Fix OInK instability with failures to converge (#256 <https://github.com/open-planning/roboplan/issues/256>)
+  * Cartesian path planner (#240 <https://github.com/open-planning/roboplan/issues/240>)
+  * Make ConfigurationTask runtime tunable and add AccelerationLimit (#250 <https://github.com/open-planning/roboplan/issues/250>)
+  * Add broadphase culling to collision checking and self-collision barrier (#254 <https://github.com/open-planning/roboplan/issues/254>)
+  * Add clang-tidy (#182 <https://github.com/open-planning/roboplan/issues/182>)
+  * add base frame support to Jacobian (#238 <https://github.com/open-planning/roboplan/issues/238>)
+  * Contributors: Muslim Alaran, Sebastian Castro, Sebastian Jahr
+
+ -- "Sebastian Jahr" <sebastian.jahr@tuta.io>  Tue, 07 Jul 2026 04:00:00 -0000
+
+ros-jazzy-roboplan-oink (0.4.0-1noble) noble; urgency=high
+
+  * Fix failing OInK test due to dimension mismatch (#225 <https://github.com/open-planning/roboplan/issues/225>)
+  * Add Ubuntu 26.04 and ROS 2 Lyrical to CI (#215 <https://github.com/open-planning/roboplan/issues/215>)
+  * Add missing gtest and gmock deps in package.xmls (#223 <https://github.com/open-planning/roboplan/issues/223>)
+  * Modularize Python bindings (#221 <https://github.com/open-planning/roboplan/issues/221>)
+  * OInK self-collision barrier (#207 <https://github.com/open-planning/roboplan/issues/207>)
+  * Support priorities and nullspace projection in OInK tasks (#206 <https://github.com/open-planning/roboplan/issues/206>)
+  * Support planar joints (#209 <https://github.com/open-planning/roboplan/issues/209>)
+  * Contributors: Ola Ghattas, Sebastian Castro
+
+ -- "Sebastian Jahr" <sebastian.jahr@tuta.io>  Tue, 02 Jun 2026 04:00:00 -0000
+
+ros-jazzy-roboplan-oink (0.3.0-1noble) noble; urgency=high
+
+  * Incorporate scene and joint groups into OInK (#177 <https://github.com/open-planning/roboplan/issues/177>)
+  * Switch to OSQP v0.6.3 for OInK (#176 <https://github.com/open-planning/roboplan/issues/176>)
+  * Get toppra from binaries or FetchContent (#174 <https://github.com/open-planning/roboplan/issues/174>)
+  * [oink] Control Barrier Functions (#122 <https://github.com/open-planning/roboplan/issues/122>)
+  * Add scene methods to get joint limit vectors (#162 <https://github.com/open-planning/roboplan/issues/162>)
+  * Fix position limits oink constraint for models with continuous joints (#147 <https://github.com/open-planning/roboplan/issues/147>)
+  * Ensure oink tests run in all workflows (#145 <https://github.com/open-planning/roboplan/issues/145>)
+  * Simplify oink frame task and use model joint limits for velocity constraints (#143 <https://github.com/open-planning/roboplan/issues/143>)
+  * Fix roboplan_oink OSQP dependency resolution (#141 <https://github.com/open-planning/roboplan/issues/141>)
+  * Contributors: Sebastian Castro, Sebastian Jahr, Zhengyang Kris Weng
+
+ -- "Sebastian Jahr" <sebastian.jahr@tuta.io>  Sat, 18 Apr 2026 04:00:00 -0000
+
+ros-jazzy-roboplan-oink (0.2.0-1noble) noble; urgency=high
+
+  * Expose oink solver regularization as argument (#136 <https://github.com/open-planning/roboplan/issues/136>)
+  * Simplify FrameTask interface and allow modifying target transforms at runtime (#131 <https://github.com/open-planning/roboplan/issues/131>)
+  * Remove lambdas from oink python bindings and use Eigen::Ref (#119 <https://github.com/open-planning/roboplan/issues/119>)
+  * Optimal differential IK solver (#110 <https://github.com/open-planning/roboplan/issues/110>)
+  * Contributors: Sebastian Castro, Sebastian Jahr
+
+ -- "Sebastian Jahr" <sebastian.jahr@tuta.io>  Mon, 16 Feb 2026 05:00:00 -0000
+
+
