@@ -1,0 +1,16 @@
+ros-kilted-roboplan-cartesian-planning (0.5.1-1noble) noble; urgency=high
+
+  * Make nanobind-dev and python3-dev build dependencies in package.xml (#264 <https://github.com/open-planning/roboplan/issues/264>)
+  * Contributors: Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Mon, 13 Jul 2026 04:00:00 -0000
+
+ros-kilted-roboplan-cartesian-planning (0.5.0-1noble) noble; urgency=high
+
+  * Add pixi Support for osx-arm64 and missing docs pages (#248 <https://github.com/open-planning/roboplan/issues/248>)
+  * Cartesian path planner (#240 <https://github.com/open-planning/roboplan/issues/240>)
+  * Contributors: Erik Holum, Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Tue, 07 Jul 2026 04:00:00 -0000
+
+
