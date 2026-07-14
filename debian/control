@@ -1,0 +1,12 @@
+Source: ros-jazzy-roboplan-rrt
+Section: misc
+Priority: optional
+Maintainer: "Sebastian Castro" <sebas.a.castro@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), nanobind-dev, python3-dev, ros-jazzy-ament-cmake, ros-jazzy-ament-cmake-gtest <!nocheck>, ros-jazzy-ament-cmake-pytest <!nocheck>, ros-jazzy-ament-cmake-python, ros-jazzy-roboplan, ros-jazzy-roboplan-example-models <!nocheck>, ros-jazzy-ros-workspace
+Homepage: https://index.ros.org/p/roboplan_rrt/#jazzy
+Standards-Version: 3.9.2
+
+Package: ros-jazzy-roboplan-rrt
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-jazzy-roboplan, ros-jazzy-ros-workspace
+Description: Rapidly-Exploring Random Tree (RRT) implementation for RoboPlan.
