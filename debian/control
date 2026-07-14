@@ -1,0 +1,12 @@
+Source: ros-lyrical-roboplan-example-models
+Section: misc
+Priority: optional
+Maintainer: "Sebastian Castro" <sebas.a.castro@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), nanobind-dev, python3-dev, ros-lyrical-ament-cmake, ros-lyrical-ament-cmake-python, ros-lyrical-ros-workspace
+Homepage: https://index.ros.org/p/roboplan_example_models/#lyrical
+Standards-Version: 3.9.2
+
+Package: ros-lyrical-roboplan-example-models
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-lyrical-ros-workspace
+Description: Robot descriptions for RoboPlan testing and examples.
