@@ -1,7 +1,11 @@
 cmake_minimum_required(VERSION 3.22)
-project(roboplan_examples VERSION 0.5.1)
+project(roboplan_examples VERSION 0.6.0)
 
-if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+  # clang-cl remaps plain -Wall to MSVC /Wall (clang's -Weverything); use the
+  # /clang: prefix to pass the GNU-style flags through unchanged.
+  add_compile_options(/clang:-Wall /clang:-Wextra /clang:-Wpedantic)
+elseif(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
@@ -27,5 +31,8 @@ add_subdirectory(python)
 # If ament_cmake is detected, export the package to be visible in ROS 2.
 if ( ament_cmake_FOUND )
     message(STATUS "ament_cmake found. Exporting for ROS 2.")
+    if(BUILD_TESTING)
+        add_subdirectory(test)
+    endif()
     ament_package()
 endif()
