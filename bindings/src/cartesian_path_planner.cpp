@@ -30,16 +30,15 @@ void init_cartesian_path_planner(nanobind::module_& m) {
                                             "Options for the Cartesian path planner.")
       .def(nanobind::init<std::string, double, CartesianSpeedMode, double, double, double, double,
                           double, double, double, double, double, double, double, double, double,
-                          double, double, double, double, int>(),
+                          double, double, double>(),
            "group_name"_a = "", "dt"_a = 0.01, "speed_mode"_a = CartesianSpeedMode::Bounded,
            "max_linear_speed"_a = 0.1, "max_angular_speed"_a = 0.5,
            "max_linear_acceleration"_a = 0.5, "max_angular_acceleration"_a = 2.5,
            "max_position_error"_a = 0.005, "max_orientation_error"_a = 0.01,
            "position_cost"_a = 1.0, "orientation_cost"_a = 1.0, "task_gain"_a = 1.0,
            "lm_damping"_a = 0.01, "regularization"_a = 1e-6, "config_task_weight"_a = 0.05,
-           "velocity_scale"_a = 1.0, "acceleration_scale"_a = 1.0, "limit_ratio_tolerance"_a = 1.05,
-           "toppra_blend_deviation"_a = 0.05, "position_limit_gain"_a = 1.0,
-           "max_attempts_per_step"_a = 16)
+           "velocity_scale"_a = 1.0, "acceleration_scale"_a = 1.0,
+           "toppra_blend_deviation"_a = 0.05, "position_limit_gain"_a = 1.0)
       .def_rw("group_name", &CartesianPlannerOptions::group_name, "Joint group name.")
       .def_rw("dt", &CartesianPlannerOptions::dt, "Output trajectory sample period (s).")
       .def_rw("speed_mode", &CartesianPlannerOptions::speed_mode, "Speed/timing strategy.")
@@ -69,18 +68,12 @@ void init_cartesian_path_planner(nanobind::module_& m) {
       .def_rw("velocity_scale", &CartesianPlannerOptions::velocity_scale,
               "Scaling factor for joint velocity limits.")
       .def_rw("acceleration_scale", &CartesianPlannerOptions::acceleration_scale,
-              "Scaling factor for joint acceleration limits (TimeOptimal re-timing and Bounded "
-              "joint-acceleration throttle).")
-      .def_rw("limit_ratio_tolerance", &CartesianPlannerOptions::limit_ratio_tolerance,
-              "Acceptance tolerance (>= 1.0) for the Bounded mode's slow-down retry; the peak "
-              "velocity/acceleration ratios may exceed the (scaled) limits by up to this factor.")
+              "Scaling factor for joint acceleration limits, applied by the TOPP-RA re-timing.")
       .def_rw("toppra_blend_deviation", &CartesianPlannerOptions::toppra_blend_deviation,
-              "Corner-rounding tolerance (rad) for the TimeOptimal mode's TOPP-RA line+blend "
-              "geometry.")
+              "Corner-rounding tolerance (rad) for the TOPP-RA line+blend geometry; also sets how "
+              "far the resolved path may be decimated before re-timing.")
       .def_rw("position_limit_gain", &CartesianPlannerOptions::position_limit_gain,
-              "Gain for the joint position-limit constraint.")
-      .def_rw("max_attempts_per_step", &CartesianPlannerOptions::max_attempts_per_step,
-              "Maximum feedrate-throttling attempts per control step.");
+              "Gain for the joint position-limit constraint.");
 
   nanobind::class_<CartesianPlannerComponents>(
       m, "CartesianPlannerComponents",
