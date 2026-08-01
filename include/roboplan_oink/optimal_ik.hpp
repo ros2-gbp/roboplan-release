@@ -1,16 +1,22 @@
 #pragma once
 
+#include <limits>
 #include <memory>
 #include <string>
 
-#include "OsqpEigen/OsqpEigen.h"
 #include <tl/expected.hpp>
 
 #include <roboplan/core/collision_context.hpp>
 #include <roboplan/core/scene.hpp>
 #include <roboplan/core/types.hpp>
 
+#include <roboplan_oink/detail/qp_solver_fwd.hpp>
+#include <roboplan_oink/oink_settings.hpp>
+
 namespace roboplan {
+
+/// @brief Infinity value used for unbounded QP constraint bounds.
+constexpr double kInfinity = std::numeric_limits<double>::infinity();
 
 /// @brief Abstract base class for IK tasks.
 ///
@@ -65,16 +71,16 @@ struct Task {
   /// - W: Weight matrix for cost normalization
   ///
   /// The method returns:
-  /// - H = J_w^T J_w + μ I  (num_variables x num_variables Hessian matrix, sparse)
+  /// - H = J_w^T J_w + μ I  (num_variables x num_variables Hessian matrix)
   /// - c = -J_w^T e_w       (num_variables x 1 linear term)
   ///
   /// Where J_w = W*J, e_w = -α*W*e, and μ is the Levenberg-Marquardt damping.
   /// @param scene The scene containing robot model and state.
-  /// @param H Output Hessian matrix (sparse)
+  /// @param H Output Hessian matrix
   /// @param c Output linear cost term
   /// @return void on success, error message on failure.
-  tl::expected<void, std::string>
-  computeQpObjective(const Scene& scene, Eigen::SparseMatrix<double>& H, Eigen::VectorXd& c);
+  tl::expected<void, std::string> computeQpObjective(const Scene& scene, Eigen::MatrixXd& H,
+                                                     Eigen::VectorXd& c);
 
   const double gain = 1.0;        // Task gain for low-pass filtering
   const Eigen::MatrixXd weight;   // Weight matrix for cost normalization
@@ -260,25 +266,26 @@ struct Oink {
   /// @throws std::runtime_error if group_name is not found in the scene.
   Oink(const Scene& scene, const std::string& group_name);
 
-  /// @brief Constructs an Oink solver for a named joint group with custom OSQP settings.
+  /// @brief Constructs an Oink solver for a named joint group with custom solver settings.
   ///
   /// @param scene The scene used to resolve the group at construction time.
   /// @param group_name Joint group name. Pass an empty string for the full robot.
-  /// @param custom_settings Custom OSQP solver settings.
+  /// @param custom_settings Custom QP solver settings.
   /// @throws std::runtime_error if group_name is not found in the scene.
-  Oink(const Scene& scene, const std::string& group_name,
-       const OsqpEigen::Settings& custom_settings);
+  Oink(const Scene& scene, const std::string& group_name, const OinkSettings& custom_settings);
 
   /// @brief Constructs an Oink solver for the full robot (all joints).
   ///
   /// Equivalent to Oink(scene, "").
   explicit Oink(const Scene& scene) : Oink(scene, "") {}
 
-  /// @brief Constructs an Oink solver for the full robot with custom OSQP settings.
+  /// @brief Constructs an Oink solver for the full robot with custom solver settings.
   ///
   /// Equivalent to Oink(scene, "", custom_settings).
-  Oink(const Scene& scene, const OsqpEigen::Settings& custom_settings)
+  Oink(const Scene& scene, const OinkSettings& custom_settings)
       : Oink(scene, "", custom_settings) {}
+
+  ~Oink();
 
   /// @brief Solve inverse kinematics for tasks only
   ///
@@ -412,9 +419,10 @@ private:
   void rebuildNullspaceProjector(double lambda_sq);
 
 public:
-  // QP solver
-  OsqpEigen::Solver solver;
-  OsqpEigen::Settings settings;
+  // QP solver (ProxQP dense backend). Reconstructed whenever the constraint row count
+  // changes, since ProxQP fixes the problem dimensions at construction.
+  detail::QpSolverPtr solver;
+  OinkSettings settings;
 
   // Problem dimensions
   int num_variables;
@@ -425,25 +433,18 @@ public:
   /// @brief Velocity indices of the joint group (used to scatter delta_q back into model.nv space).
   Eigen::VectorXi v_indices;
 
-  // Pre-allocated QP contribution matrices (reused for each task)
-  Eigen::VectorXd task_c;
-  Eigen::SparseMatrix<double> task_H;
-
   // Pre-allocated accumulated QP matrices
-  Eigen::SparseMatrix<double> H;
+  Eigen::MatrixXd H;
   Eigen::VectorXd c;
 
   // Pre-allocated constraint matrices
   Eigen::MatrixXd constraint_workspace_A;
   Eigen::VectorXd constraint_workspace_lower;
   Eigen::VectorXd constraint_workspace_upper;
-  Eigen::SparseMatrix<double> A_sparse;
   std::vector<int> constraint_sizes;
   int last_constraint_rows = -1;  // -1 indicates uninitialized
 
-  // Pre-allocated barrier workspace matrices
-  Eigen::MatrixXd barrier_workspace_G;
-  Eigen::VectorXd barrier_workspace_h;
+  // Pre-allocated barrier workspace sizes
   std::vector<int> barrier_sizes;
   int last_barrier_rows = 0;
 
