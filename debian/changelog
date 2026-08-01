@@ -1,0 +1,28 @@
+ros-rolling-roboplan-cartesian-planning (0.6.0-1resolute) resolute; urgency=high
+
+  * Improve Cartesian path planner (#277 <https://github.com/open-planning/roboplan/issues/277>)
+  * Fix MacOS rpath issues (#275 <https://github.com/open-planning/roboplan/issues/275>)
+  * Fix Python bindings installs for ROS + Windows (#272 <https://github.com/open-planning/roboplan/issues/272>)
+  * Windows support through Pixi (#271 <https://github.com/open-planning/roboplan/issues/271>)
+  * Switch OInK backend from OSQP to ProxQP (#259 <https://github.com/open-planning/roboplan/issues/259>)
+    Co-authored-by: Sebastian Castro <mailto:sebas.a.castro@gmail.com>
+  * Contributors: Erik Holum, Sebastian Castro, Sebastian Jahr
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Fri, 31 Jul 2026 04:00:00 -0000
+
+ros-rolling-roboplan-cartesian-planning (0.5.1-1resolute) resolute; urgency=high
+
+  * Make nanobind-dev and python3-dev build dependencies in package.xml (#264 <https://github.com/open-planning/roboplan/issues/264>)
+  * Contributors: Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Mon, 13 Jul 2026 04:00:00 -0000
+
+ros-rolling-roboplan-cartesian-planning (0.5.0-1resolute) resolute; urgency=high
+
+  * Add pixi Support for osx-arm64 and missing docs pages (#248 <https://github.com/open-planning/roboplan/issues/248>)
+  * Cartesian path planner (#240 <https://github.com/open-planning/roboplan/issues/240>)
+  * Contributors: Erik Holum, Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Tue, 07 Jul 2026 04:00:00 -0000
+
+
