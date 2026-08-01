@@ -1,9 +1,9 @@
 #include <algorithm>
 #include <limits>
 
-#include <OsqpEigen/OsqpEigen.h>
 #include <pinocchio/algorithm/joint-configuration.hpp>
 #include <roboplan_oink/optimal_ik.hpp>
+#include <roboplan_oink/qp_backend.hpp>
 
 namespace {
 // Minimum squared norm threshold to avoid division by zero in barrier regularization
@@ -45,7 +45,7 @@ tl::expected<double, std::string>
 Barrier::evaluateAtConfiguration(const pinocchio::Model& /*model*/, pinocchio::Data& /*data*/,
                                  const Eigen::VectorXd& /*q*/) const {
   // Default: return infinity to indicate not supported by this barrier type
-  return OSQP_INFTY;
+  return kInfinity;
 }
 
 void Barrier::formatQpInequalities(Eigen::Ref<Eigen::MatrixXd> G,
@@ -117,8 +117,8 @@ tl::expected<void, std::string> Barrier::computeQpObjective(const Scene& scene,
   return {};
 }
 
-tl::expected<void, std::string>
-Task::computeQpObjective(const Scene& scene, Eigen::SparseMatrix<double>& H, Eigen::VectorXd& c) {
+tl::expected<void, std::string> Task::computeQpObjective(const Scene& scene, Eigen::MatrixXd& H,
+                                                         Eigen::VectorXd& c) {
   // Compute Jacobian and error into internal containers
   auto jacobian_result = computeJacobian(scene);
   if (!jacobian_result.has_value()) {
@@ -138,34 +138,18 @@ Task::computeQpObjective(const Scene& scene, Eigen::SparseMatrix<double>& H, Eig
   // Compute Levenberg-Marquardt damping based on weighted error
   const double mu = lm_damping * error_container.squaredNorm();
 
-  // Compute H = J^T * J + mu * I using pre-allocated H_dense
-  H_dense.noalias() = jacobian_container.transpose() * jacobian_container;
-  H_dense.diagonal().array() += mu;
-  H = H_dense.sparseView();
+  // Compute H = J^T * J + mu * I
+  H.noalias() = jacobian_container.transpose() * jacobian_container;
+  H.diagonal().array() += mu;
 
   // Compute c = - J^T * e_w
   c.noalias() = -jacobian_container.transpose() * error_container;
   return {};
 }
 
-Oink::Oink(const Scene& scene, const std::string& group_name,
-           const OsqpEigen::Settings& custom_settings)
-    : settings(custom_settings), enforce_barriers_data(scene.getModel()) {
-  const auto maybe_group_info = scene.getJointGroupInfo(group_name);
-  if (!maybe_group_info) {
-    throw std::runtime_error("Oink: joint group '" + group_name +
-                             "' not found: " + maybe_group_info.error());
-  }
-  q_indices = maybe_group_info->q_indices;
-  v_indices = maybe_group_info->v_indices;
-  num_variables = static_cast<int>(v_indices.size());
-
-  task_c = Eigen::VectorXd::Zero(num_variables);
-  task_H = Eigen::SparseMatrix<double>(num_variables, num_variables);
-  H = Eigen::SparseMatrix<double>(num_variables, num_variables);
-  c = Eigen::VectorXd::Zero(num_variables);
-
-  collision_context_ = std::make_unique<CollisionContext>(scene);
+Oink::Oink(const Scene& scene, const std::string& group_name, const OinkSettings& custom_settings)
+    : Oink(scene, group_name) {
+  settings = custom_settings;
 }
 
 Oink::Oink(const Scene& scene, const std::string& group_name)
@@ -179,16 +163,13 @@ Oink::Oink(const Scene& scene, const std::string& group_name)
   v_indices = maybe_group_info->v_indices;
   num_variables = static_cast<int>(v_indices.size());
 
-  task_c = Eigen::VectorXd::Zero(num_variables);
-  task_H = Eigen::SparseMatrix<double>(num_variables, num_variables);
-  H = Eigen::SparseMatrix<double>(num_variables, num_variables);
+  H = Eigen::MatrixXd::Zero(num_variables, num_variables);
   c = Eigen::VectorXd::Zero(num_variables);
 
   collision_context_ = std::make_unique<CollisionContext>(scene);
-
-  settings.setWarmStart(true);
-  settings.setVerbosity(false);
 }
+
+Oink::~Oink() = default;
 
 tl::expected<void, std::string>
 Oink::solveIk(const Scene& scene, const std::vector<std::shared_ptr<Task>>& tasks,
@@ -214,8 +195,8 @@ Oink::solveIk(const Scene& scene, const std::vector<std::shared_ptr<Task>>& task
                    [](Task* a, Task* b) { return a->priority < b->priority; });
 
   // Reset Hessian and Gradient.
-  H.setIdentity();
-  H.diagonal().array() *= regularization;
+  H.setZero();
+  H.diagonal().setConstant(regularization);
   c.setZero();
 
   // Cumulative nullspace projector and Jacobian stack.
@@ -265,11 +246,9 @@ Oink::solveIk(const Scene& scene, const std::vector<std::shared_ptr<Task>>& task
       return tl::make_unexpected("Failed to compute barrier Jacobian: " + jacobian_result.error());
     }
     barrier->formatQpObjective(scene, barrier_H_contribution, barrier_c_contribution);
-    H += barrier_H_contribution.sparseView();
+    H += barrier_H_contribution;
     c += barrier_c_contribution;
   }
-
-  H.makeCompressed();
 
   // Build inequality rows for constraints and barriers, in the original dq space.
   // No transformation is needed because dq is the decision variable directly.
@@ -293,16 +272,14 @@ Oink::solveIk(const Scene& scene, const std::vector<std::shared_ptr<Task>>& task
   // For barriers: -inf <= G*dq <= h (only upper bounded)
   const int total_rows = total_constraint_rows + total_barrier_rows;
 
-  const bool init_required =
-      !solver.isInitialized() ||
-      (total_constraint_rows != last_constraint_rows || total_barrier_rows != last_barrier_rows);
+  const bool init_required = !solver || (total_constraint_rows != last_constraint_rows ||
+                                         total_barrier_rows != last_barrier_rows);
 
   // Resize constraint workspace if dimensions changed
   if (init_required) {
     constraint_workspace_A.resize(total_rows, num_variables);
     constraint_workspace_lower.resize(total_rows);
     constraint_workspace_upper.resize(total_rows);
-    A_sparse.resize(total_rows, num_variables);
     last_constraint_rows = total_constraint_rows;
     last_barrier_rows = total_barrier_rows;
   }
@@ -348,7 +325,7 @@ Oink::solveIk(const Scene& scene, const std::vector<std::shared_ptr<Task>>& task
 
     barriers.at(i)->formatQpInequalities(barrier_G_view, barrier_h_view);
 
-    constraint_workspace_lower.segment(row_offset, num_rows).setConstant(-OsqpEigen::INFTY);
+    constraint_workspace_lower.segment(row_offset, num_rows).setConstant(-kInfinity);
 
     row_offset += num_rows;
   }
@@ -357,82 +334,9 @@ Oink::solveIk(const Scene& scene, const std::vector<std::shared_ptr<Task>>& task
   constraint_sizes.clear();
   barrier_sizes.clear();
 
-  // Convert constraint matrix to sparse format
-  A_sparse = constraint_workspace_A.sparseView();
-
-  if (init_required) {
-    if (solver.isInitialized()) {
-      solver.clearSolver();
-    }
-    solver.data()->clearHessianMatrix();
-    solver.data()->clearLinearConstraintsMatrix();
-
-    const OSQPSettings* stored_settings = settings.getSettings();
-#ifdef OSQP_EIGEN_OSQP_IS_V1
-    solver.settings()->setWarmStart(stored_settings->warm_starting);
-    solver.settings()->setPolish(stored_settings->polishing);
-#else
-    solver.settings()->setWarmStart(stored_settings->warm_start);
-    solver.settings()->setPolish(stored_settings->polish);
-#endif
-    solver.settings()->setVerbosity(stored_settings->verbose);
-    solver.settings()->setAlpha(stored_settings->alpha);
-    solver.settings()->setAbsoluteTolerance(stored_settings->eps_abs);
-    solver.settings()->setRelativeTolerance(stored_settings->eps_rel);
-    solver.settings()->setPrimalInfeasibilityTolerance(stored_settings->eps_prim_inf);
-    solver.settings()->setDualInfeasibilityTolerance(stored_settings->eps_dual_inf);
-    solver.settings()->setMaxIteration(stored_settings->max_iter);
-    solver.settings()->setRho(stored_settings->rho);
-    solver.settings()->setAdaptiveRho(stored_settings->adaptive_rho);
-    solver.settings()->setTimeLimit(stored_settings->time_limit);
-
-    solver.data()->setNumberOfVariables(num_variables);
-    solver.data()->setNumberOfConstraints(total_rows);
-    if (total_rows > 0) {
-      solver.data()->setLinearConstraintsMatrix(A_sparse);
-      solver.data()->setLowerBound(constraint_workspace_lower);
-      solver.data()->setUpperBound(constraint_workspace_upper);
-    }
-    solver.data()->setHessianMatrix(H);
-    solver.data()->setGradient(c);
-    if (!solver.initSolver()) {
-      return tl::make_unexpected("Failed to initialize solver");
-    }
-  } else {
-    if (!solver.updateHessianMatrix(H)) {
-      return tl::make_unexpected("Failed to update Hessian matrix");
-    }
-    if (!solver.updateGradient(c)) {
-      return tl::make_unexpected("Failed to update gradient vector");
-    }
-    if (total_rows > 0) {
-      if (!solver.updateLinearConstraintsMatrix(A_sparse)) {
-        return tl::make_unexpected("Failed to update linear constraints matrix");
-      }
-      if (!solver.updateBounds(constraint_workspace_lower, constraint_workspace_upper)) {
-        return tl::make_unexpected("Failed to update constraint bounds");
-      }
-    }
-  }
-
-  auto solve_result = solver.solveProblem();
-  if (solve_result != OsqpEigen::ErrorExitFlag::NoError) {
-    return tl::make_unexpected("QP solver failed to find a solution");
-  }
-
-  // If the solver did not converge, even with NoError status, this can return large garbage values.
-  // In this case, return a zero step and reset the warm-start state so the numerical instability
-  // is not carried into the next solve.
-  const OsqpEigen::Status status = solver.getStatus();
-  if (status != OsqpEigen::Status::Solved && status != OsqpEigen::Status::SolvedInaccurate) {
-    delta_q.setZero();
-    solver.clearSolverVariables();
-    return {};
-  }
-
-  // Extract the solution and copy into delta_q
-  delta_q.noalias() = solver.getSolution();
-  return {};
+  return detail::solveQp(solver, settings, init_required, num_variables, total_rows, H, c,
+                         constraint_workspace_A, constraint_workspace_lower,
+                         constraint_workspace_upper, delta_q);
 }
 
 // Overload: tasks only
@@ -472,8 +376,11 @@ Oink::enforceBarriers(const Scene& scene, const std::vector<std::shared_ptr<Barr
   const auto& model = scene.getModel();
   const Eigen::VectorXd& q = scene.getCurrentJointPositions();
 
-  // Compute candidate configuration by integrating delta_q
-  const Eigen::VectorXd q_candidate = pinocchio::integrate(model, q, delta_q);
+  // Compute candidate configuration by integrating delta_q. The copy into a plain VectorXd
+  // makes the call match pinocchio's pre-instantiated integrate() signature, so this TU does
+  // not instantiate the joint-visitor templates itself.
+  const Eigen::VectorXd dq(delta_q);
+  const Eigen::VectorXd q_candidate = pinocchio::integrate(model, q, dq);
 
   // Evaluate all barriers at the candidate configuration. enforce_barriers_data is a
   // pre-allocated pinocchio::Data scoped to this method, so we don't mutate scene state.
@@ -538,7 +445,7 @@ tl::expected<void, std::string> Oink::addTaskContribution(const Scene& scene, Ta
 
   task->H_dense.noalias() = projected_weighted_jacobian.transpose() * projected_weighted_jacobian;
   task->H_dense.diagonal().array() += mu;
-  H += task->H_dense.sparseView();
+  H += task->H_dense;
   c.noalias() += projected_weighted_jacobian.transpose() * weighted_error;
 
   return {};
