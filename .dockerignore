@@ -1,0 +1,12 @@
+.git/
+.gitattributes
+.github
+.gitignore
+.gitmodules
+.pixi/
+.vscode/
+
+**/build/
+**/install/
+**/Dockerfile
+docker-compose.yaml
