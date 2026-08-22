@@ -12,7 +12,7 @@
 namespace roboplan {
 
 namespace {
-constexpr std::array<std::string_view, 3> kAxisNames = {"x", "y", "z"};
+constexpr std::array<std::string_view, 3> kAxisNames = {{"x", "y", "z"}};
 }  // namespace
 
 PositionBarrier::PositionBarrier(const Oink& oink, const Scene& scene,
@@ -30,7 +30,7 @@ PositionBarrier::PositionBarrier(const Oink& oink, const Scene& scene,
   frame_id = maybe_frame_id.value();
 
   // Validate that p_min < p_max for enabled axes with finite bounds
-  const std::array<bool, 3> axes_enabled = {axis_selection.x, axis_selection.y, axis_selection.z};
+  const std::array<bool, 3> axes_enabled{{axis_selection.x, axis_selection.y, axis_selection.z}};
   for (int i = 0; i < 3; ++i) {
     if (axes_enabled[i] && std::isfinite(p_min[i]) && std::isfinite(p_max[i])) {
       if (p_min[i] >= p_max[i]) {
@@ -114,16 +114,15 @@ tl::expected<void, std::string> PositionBarrier::computeBarrier(const Scene& sce
 }
 
 tl::expected<void, std::string> PositionBarrier::computeJacobian(const Scene& scene) {
-  // Compute full-robot frame Jacobian (6 x model.nv) in world frame
-  // Using WORLD reference frame so no additional rotation is needed
-  // since our position bounds are specified in world coordinates
+  // The barrier constrains where the frame origin is, so its Jacobian must be d(pworld)/dq.
+  // This is computed in Pinocchio using LOCAL_WORLD_ALIGNED.
   const Eigen::VectorXd& q = scene.getCurrentJointPositions();
-  scene.computeFrameJacobian(q, frame_id, pinocchio::ReferenceFrame::WORLD, full_jacobian);
+  scene.computeFrameJacobian(q, frame_id, pinocchio::ReferenceFrame::LOCAL_WORLD_ALIGNED,
+                             full_jacobian);
 
-  // Pinocchio frame Jacobian layout with WORLD reference frame:
+  // Pinocchio frame Jacobian layout:
   //   Rows 0-2: linear velocity (dp_world/dq) - this is what we need
   //   Rows 3-5: angular velocity (d_omega_world/dq)
-  // Note: With LOCAL or LOCAL_WORLD_ALIGNED, the ordering may differ
 
   // Build barrier Jacobians from the linear velocity rows, selecting group columns via v_indices
   int idx = 0;
