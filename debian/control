@@ -1,0 +1,12 @@
+Source: ros-lyrical-roboplan
+Section: misc
+Priority: optional
+Maintainer: "Sebastian Castro" <sebas.a.castro@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), ros-lyrical-ament-cmake, ros-lyrical-ros-workspace
+Homepage: https://roboplan.readthedocs.io
+Standards-Version: 3.9.2
+
+Package: ros-lyrical-roboplan
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-lyrical-roboplan-cartesian-planning, ros-lyrical-roboplan-common, ros-lyrical-roboplan-core, ros-lyrical-roboplan-example-models, ros-lyrical-roboplan-examples, ros-lyrical-roboplan-oink, ros-lyrical-roboplan-rrt, ros-lyrical-roboplan-simple-ik, ros-lyrical-roboplan-toppra, ros-lyrical-ros-workspace
+Description: Metapackage for the RoboPlan motion-planning library.
