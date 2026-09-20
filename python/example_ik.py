@@ -2,17 +2,23 @@
 
 import sys
 import time
-import tyro
-import xacro
 
 import numpy as np
 import pinocchio as pin
+import tyro
+import xacro
+from common import get_model_data
 from pinocchio.visualize import ViserVisualizer
 
-from common import get_model_data
-from roboplan.core import Scene, JointConfiguration, CartesianConfiguration
+from roboplan.core import (
+    CartesianConfiguration,
+    JointConfiguration,
+    Scene,
+    loadJointLimitsConfig,
+    loadUrdfSceneDescriptionFromXml,
+)
 from roboplan.example_models import get_package_share_dir
-from roboplan.simple_ik import SimpleIkOptions, SimpleIk
+from roboplan.simple_ik import SimpleIk, SimpleIkOptions
 
 
 def main(
@@ -26,15 +32,14 @@ def main(
     port: str = "8000",
 ):
     """
-    Run the IK example with the provided parameters.
-
+    Drag an end-effector marker in Viser and solve IK to follow it.
 
     Parameters:
         model: The name of the model to use.
         max_iters: Maximum number of iterations for the IK solver.
         step_size: Integration step size for the IK solver.
-        max_linear_error_norm: The maximum linear error norm for the IK solver.
-        max_angular_error_norm: The maximum angular error norm for the IK solver.
+        max_linear_error_norm: The maximum linear error norm (m) for the IK solver.
+        max_angular_error_norm: The maximum angular error norm (rad) for the IK solver.
         check_collisions: Whether to check for collisions when solving IK.
         host: The host for the ViserVisualizer.
         port: The port for the ViserVisualizer.
@@ -49,18 +54,18 @@ def main(
     srdf_xml = xacro.process_file(model_data.srdf_path).toxml()
     package_paths = [get_package_share_dir()]
 
-    # Specify argument names to distinguish overloaded Scene constructors from python.
     scene = Scene(
         "test_scene",
-        urdf=urdf_xml,
-        srdf=srdf_xml,
-        package_paths=package_paths,
-        yaml_config_path=model_data.yaml_config_path,
+        loadUrdfSceneDescriptionFromXml(urdf_xml, package_paths),
     )
+    scene.importJointLimitsFromConfig(
+        loadJointLimitsConfig(model_data.yaml_config_path)
+    )
+    scene.importSrdf(srdf_xml)
     q_indices = scene.getJointGroupInfo(model_data.default_joint_group).q_indices
 
-    # Create a redundant Pinocchio model just for visualization with mimic joints.
-    # When Pinocchio 4.x releases nanobind bindings, we should be able to directly grab the model from the scene instead.
+    # Build a separate Pinocchio model (with mimic joints) for visualization. Until Pinocchio
+    # and Coal have nanobind bindings, it cannot be taken from the scene.
     model = pin.buildModelFromXML(urdf_xml, mimic=True)
     collision_model = pin.buildGeomFromUrdfString(
         model, urdf_xml, pin.GeometryType.COLLISION, package_dirs=package_paths
@@ -125,7 +130,6 @@ def main(
         controls.on_update(solveIk)
         transform_controls.append(controls)
 
-    # Create a marker reset button.
     reset_button = viz.viewer.gui.add_button("Reset Marker")
 
     @reset_button.on_click
