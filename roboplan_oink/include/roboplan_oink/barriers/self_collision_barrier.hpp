@@ -6,16 +6,15 @@
 
 #include <pinocchio/multibody/geometry.hpp>
 
-#include <roboplan/core/collision_context.hpp>
+#include <roboplan/core/scene_context.hpp>
 #include <roboplan_oink/optimal_ik.hpp>
 
 namespace roboplan {
 
 /// @brief Parameters for SelfCollisionBarrier configuration.
 struct SelfCollisionBarrierOptions {
-  /// @brief Maximum number of closest collision pairs to constrain. Must be > 0. Only the closest
-  /// `n_collision_pairs` pairs at the current configuration are constrained. Values larger than the
-  /// number of collision pairs in the scene are clipped to that count.
+  /// @brief Maximum number of collision pairs to constrain; only the closest pairs at the current
+  /// configuration are used. Must be > 0. Values above the scene's pair count are clipped to it.
   int n_collision_pairs = 1;
 
   /// @brief Barrier gain (gamma), controls convergence to safe set (default: 1.0).
@@ -36,12 +35,11 @@ struct SelfCollisionBarrierOptions {
   /// distance computation (the dominant per-solve cost on dense / mesh-heavy models) and
   /// therefore exert no influence on the barrier.
   ///
-  /// This is a visibility / performance bound, NOT a separation limit: it does not constrain how
-  /// far apart bodies may be. When set comfortably larger than the distances at which the barrier
-  /// actively pushes (a few times d_min), it does not change the solution at all — only a too-small
-  /// value silently drops mid-range pairs. Default 0.5. Set to std::nullopt to disable culling.
-  /// Paired with d_min, it defines the band [d_min, d_max] of separations in the barrier.
-  std::optional<double> d_max = 0.5;
+  /// This is a visibility / performance bound, NOT a separation limit. When set comfortably larger
+  /// than the distances at which the barrier actively pushes (a few times d_min), it does not
+  /// change the solution at all -- only a too-small value silently drops mid-range pairs. Set to
+  /// std::nullopt to disable culling.
+  std::optional<double> d_max = 0.25;
 };
 
 /// @brief Self-collision avoidance barrier based on collision pair distances.
@@ -75,18 +73,18 @@ struct SelfCollisionBarrier : public Barrier {
 
   /// @brief Get the number of active barrier constraints.
   /// @return The number of collision pairs being constrained.
-  int getNumBarriers(const Scene& scene) const override;
+  int getNumBarriers(const SceneContext& context) const override;
 
   /// @brief Compute barrier function values h(q) for the closest n_collision_pairs pairs.
   ///
-  /// Triggers distance computation on the scene's collision data, then fills
-  /// `barrier_values` with the distances of the closest pairs, each shifted by `-d_min`.
+  /// Computes pair distances on the solver's context, then fills `barrier_values` with the
+  /// distances of the closest pairs, each shifted by `-d_min`.
   /// The selected pair indices are cached in `closest_pair_indices` for use by
   /// computeJacobian().
   ///
-  /// @param scene The scene containing the robot collision model and current state.
+  /// @param context The context supplying the configuration and the collision scratch to write.
   /// @return Expected void on success, error message on failure.
-  tl::expected<void, std::string> computeBarrier(const Scene& scene) override;
+  tl::expected<void, std::string> computeBarrier(const SceneContext& context) override;
 
   /// @brief Compute the Jacobian rows for the closest n_collision_pairs collision pairs.
   ///
@@ -95,21 +93,21 @@ struct SelfCollisionBarrier : public Barrier {
   /// the collision pair. If the witness points coincide, the row is zeroed (Jacobian is
   /// undefined there). Any NaN values are clamped to zero.
   ///
-  /// @param scene The scene containing the robot collision model and current state.
+  /// @param context The context supplying the configuration and the kinematics scratch to write.
   /// @return Expected void on success, error message on failure.
-  tl::expected<void, std::string> computeJacobian(const Scene& scene) override;
+  tl::expected<void, std::string> computeJacobian(const SceneContext& context) override;
 
   /// @brief Evaluate the minimum barrier value at a candidate configuration.
   ///
-  /// Refreshes geometry placements on this barrier's own CollisionContext scratch and runs
+  /// Refreshes geometry placements on the solver's SceneContext scratch and runs
   /// narrow-phase distance only on the pairs cached by the most recent computeBarrier() call
   /// (`closest_pair_indices`). For small displacements between the configuration used in
   /// computeBarrier() and `q`, those are the active constraints, and skipping narrow phase
   /// on the remaining pairs is the dominant per-solve speedup. computeBarrier() must have
   /// run before this method.
   ///
-  /// @param model Unused; kept for the Barrier interface. Distances are evaluated on this
-  ///        barrier's CollisionContext, which owns the model shared with the scene.
+  /// @param model Unused; kept for the Barrier interface. Distances are evaluated on the
+  ///        solver's SceneContext, which owns the model shared with the scene.
   /// @param data Unused; kept for the Barrier interface.
   /// @param q Candidate joint configuration to evaluate.
   /// @return Expected containing the minimum barrier value (negative if any pair is in
@@ -138,7 +136,7 @@ struct SelfCollisionBarrier : public Barrier {
   std::vector<std::size_t> closest_pair_indices;
 
   /// @brief Workspace buffer holding `min_distance` for every collision pair in the model,
-  ///        repopulated on each computeBarrier() call from the CollisionContext's GeometryData.
+  ///        repopulated on each computeBarrier() call from the SceneContext's GeometryData.
   Eigen::VectorXd all_distances;
 
   /// @brief Pre-allocated workspace for one parent-joint Jacobian (6 x model.nv).
@@ -151,11 +149,22 @@ struct SelfCollisionBarrier : public Barrier {
   ///        velocity DOFs (before selecting the joint-group columns).
   mutable Eigen::RowVectorXd full_row;
 
-  /// @brief Non-owning pointer to the Oink solver's shared collision scratch (Data + GeometryData),
-  /// captured from `oink.getCollisionContext()` at construction. All distance / joint-Jacobian
-  /// queries run on this context instead of the scene's shared collision data, so the barrier never
-  /// mutates scene state. The referenced Oink must outlive this barrier.
-  const CollisionContext* collision_context;
+  /// @brief The pair count originally requested via SelfCollisionBarrierOptions.
+  /// @details `n_collision_pairs` is this value clipped to the number of collision pairs the
+  /// context actually holds. Keeping the request lets computeBarrier() re-clip when the geometry
+  /// changes, rather than staying pinned to whatever the scene held at construction.
+  int requested_collision_pairs;
+
+  /// @brief Non-owning pointer to the Oink solver whose collision scratch this barrier runs on.
+  /// @details Resolved through context() on every use rather than cached as a SceneContext
+  /// pointer: a solver may replace its context (for example after the scene's collision geometry
+  /// changes), and a pointer captured at construction would then refer to a freed context. All
+  /// distance / joint-Jacobian queries run on that context instead of the scene's shared collision
+  /// data, so the barrier never mutates scene state. The referenced Oink must outlive this barrier.
+  const Oink* oink;
+
+  /// @brief The Oink solver's current collision scratch (Data + GeometryData).
+  const SceneContext& context() const { return oink->getContext(); }
 };
 
 }  // namespace roboplan
