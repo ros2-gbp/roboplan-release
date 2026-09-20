@@ -11,13 +11,11 @@ ConfigurationTask::ConfigurationTask(const Oink& oink, const Eigen::VectorXd& ta
            options.lm_damping),
       target_q(target_q), joint_weights(joint_weights), q_indices(oink.q_indices),
       v_indices(oink.v_indices) {
-  // Validate joint weights size matches group DOF count
   if (joint_weights.size() != oink.num_variables) {
     throw std::invalid_argument(
         "ConfigurationTask: joint_weights size (" + std::to_string(joint_weights.size()) +
         ") does not match oink.num_variables (" + std::to_string(oink.num_variables) + ")");
   }
-  // Validate joint weights are non-negative
   for (int i = 0; i < joint_weights.size(); ++i) {
     if (joint_weights(i) < 0.0) {
       throw std::invalid_argument("ConfigurationTask: joint_weights[" + std::to_string(i) +
@@ -26,7 +24,6 @@ ConfigurationTask::ConfigurationTask(const Oink& oink, const Eigen::VectorXd& ta
     }
   }
 
-  // Pre-allocate storage: nv_group×nv_group Jacobian, nv_group error, nv_group×nv_group H_dense
   const int nv = oink.num_variables;
   initializeStorage(nv, nv);
 }
@@ -40,30 +37,29 @@ void ConfigurationTask::setTargetConfiguration(const Eigen::VectorXd& target) {
   target_q = target;
 }
 
-tl::expected<void, std::string> ConfigurationTask::computeError(const Scene& scene) {
-  const auto& model = scene.getModel();
-  const Eigen::VectorXd& q = scene.getCurrentJointPositions();
+tl::expected<void, std::string> ConfigurationTask::computeError(const SceneContext& context) {
+  const auto& model = context.getModel();
+  const Eigen::VectorXd& q = context.getJointPositions();
 
-  // Validate target_q size against the group's position indices
   if (target_q.size() != q_indices.size()) {
     return tl::make_unexpected(
         "ConfigurationTask: target_q size (" + std::to_string(target_q.size()) +
         ") does not match group q_indices size (" + std::to_string(q_indices.size()) + ")");
   }
 
-  // Build full-robot target: start from current q (non-group joints stay put),
-  // then overwrite the group's positions with the desired target.
+  // Full-robot target: non-group joints stay at their current positions.
   Eigen::VectorXd q_target_full = q;
   q_target_full(q_indices) = target_q;
 
-  // Compute difference in full tangent space, then extract group joints via v_indices
+  // Difference in the full tangent space, restricted to the group's velocity indices.
   const Eigen::VectorXd full_diff = pinocchio::difference(model, q, q_target_full);
   error_container = full_diff(v_indices);
 
   return {};
 }
 
-tl::expected<void, std::string> ConfigurationTask::computeJacobian(const Scene& /*scene*/) {
+tl::expected<void, std::string>
+ConfigurationTask::computeJacobian(const SceneContext& /*context*/) {
   // The Jacobian for configuration error is negative identity (-I) (nv_group × nv_group)
   // The negative sign matches the QP formulation: minimize ||J*dq + alpha*e||^2
   // With e = difference(q, target) pointing toward target and J = -I,
