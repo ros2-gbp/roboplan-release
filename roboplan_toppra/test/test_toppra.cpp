@@ -150,7 +150,12 @@ protected:
     const auto yaml_path = model_prefix / "ur_robot_model" / "ur5_config.yaml";
     const std::vector<std::filesystem::path> package_paths = {
         example_models::get_package_share_dir()};
-    scene = std::make_shared<Scene>("test_scene", urdf_path, srdf_path, package_paths, yaml_path);
+    const auto description = loadUrdfSceneDescription(urdf_path, package_paths);
+    scene = std::make_shared<Scene>("test_scene", description);
+    scene->importJointLimitsFromConfig(loadJointLimitsConfig(yaml_path));
+    if (const auto imported = scene->importSrdf(loadTextFile(srdf_path)); !imported) {
+      throw std::runtime_error(imported.error());
+    }
   }
 
 public:
