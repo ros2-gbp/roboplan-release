@@ -1,0 +1,12 @@
+Source: ros-jazzy-roboplan-common
+Section: misc
+Priority: optional
+Maintainer: "Sebastian Castro" <sebas.a.castro@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), python3-dev, ros-jazzy-ament-cmake, ros-jazzy-ament-cmake-python, ros-jazzy-ros-workspace
+Homepage: https://roboplan.readthedocs.io
+Standards-Version: 3.9.2
+
+Package: ros-jazzy-roboplan-common
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-jazzy-ros-workspace
+Description: Shared runtime support for RoboPlan Python packages.
