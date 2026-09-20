@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <stdexcept>
 
 #include <Eigen/Dense>
 #include <memory>
@@ -7,21 +8,25 @@
 #include <roboplan_example_models/resources.hpp>
 #include <roboplan_oink/constraints/velocity_limit.hpp>
 #include <roboplan_oink/optimal_ik.hpp>
+#include <test_utils.hpp>
 
 namespace roboplan {
 
 class VelocityLimitTest : public ::testing::Test {
 protected:
   void SetUp() override {
-    // Use UR5 robot for testing
     const auto model_prefix = example_models::get_package_models_dir();
     urdf_path_ = model_prefix / "ur_robot_model" / "ur5_gripper.urdf";
     srdf_path_ = model_prefix / "ur_robot_model" / "ur5_gripper.srdf";
     package_paths_ = {example_models::get_package_share_dir()};
     yaml_config_path_ = model_prefix / "ur_robot_model" / "ur5_config.yaml";
 
-    scene_ = std::make_shared<Scene>("test_scene", urdf_path_, srdf_path_, package_paths_,
-                                     yaml_config_path_);
+    const auto description = loadUrdfSceneDescription(urdf_path_, package_paths_);
+    scene_ = std::make_shared<Scene>("test_scene", description);
+    scene_->importJointLimitsFromConfig(loadJointLimitsConfig(yaml_config_path_));
+    if (const auto imported = scene_->importSrdf(loadTextFile(srdf_path_)); !imported) {
+      throw std::runtime_error(imported.error());
+    }
     oink_ = std::make_shared<Oink>(*scene_);
 
     const auto& model = scene_->getModel();
@@ -60,7 +65,7 @@ TEST_F(VelocityLimitTest, GetNumConstraints) {
 
   VelocityLimit constraint(*oink_, dt, v_max);
 
-  int num_constraints = constraint.getNumConstraints(*scene_);
+  int num_constraints = constraint.getNumConstraints(posed(*oink_, *scene_));
   EXPECT_EQ(num_constraints, num_variables_);
 }
 
@@ -75,9 +80,10 @@ TEST_F(VelocityLimitTest, ConstraintMatrixDimensions) {
   Eigen::VectorXd lower_bounds(num_variables_);
   Eigen::VectorXd upper_bounds(num_variables_);
 
-  ASSERT_TRUE(
-      constraint.computeQpConstraints(*scene_, constraint_matrix, lower_bounds, upper_bounds)
-          .has_value());
+  ASSERT_TRUE(constraint
+                  .computeQpConstraints(posed(*oink_, *scene_), constraint_matrix, lower_bounds,
+                                        upper_bounds)
+                  .has_value());
 
   EXPECT_EQ(constraint_matrix.rows(), num_variables_);
   EXPECT_EQ(constraint_matrix.cols(), num_variables_);
@@ -96,11 +102,11 @@ TEST_F(VelocityLimitTest, ConstraintMatrixIsIdentity) {
   Eigen::VectorXd lower_bounds(num_variables_);
   Eigen::VectorXd upper_bounds(num_variables_);
 
-  ASSERT_TRUE(
-      constraint.computeQpConstraints(*scene_, constraint_matrix, lower_bounds, upper_bounds)
-          .has_value());
+  ASSERT_TRUE(constraint
+                  .computeQpConstraints(posed(*oink_, *scene_), constraint_matrix, lower_bounds,
+                                        upper_bounds)
+                  .has_value());
 
-  // Constraint matrix should be identity for box constraints
   Eigen::MatrixXd expected_identity = Eigen::MatrixXd::Identity(num_variables_, num_variables_);
   EXPECT_TRUE(constraint_matrix.isApprox(expected_identity));
 }
@@ -116,9 +122,10 @@ TEST_F(VelocityLimitTest, BoundsAreSymmetric) {
   Eigen::VectorXd lower_bounds(num_variables_);
   Eigen::VectorXd upper_bounds(num_variables_);
 
-  ASSERT_TRUE(
-      constraint.computeQpConstraints(*scene_, constraint_matrix, lower_bounds, upper_bounds)
-          .has_value());
+  ASSERT_TRUE(constraint
+                  .computeQpConstraints(posed(*oink_, *scene_), constraint_matrix, lower_bounds,
+                                        upper_bounds)
+                  .has_value());
 
   // Lower bounds should be negative of upper bounds
   EXPECT_TRUE(lower_bounds.isApprox(-upper_bounds));
@@ -135,9 +142,10 @@ TEST_F(VelocityLimitTest, BoundsScaling) {
   Eigen::VectorXd lower_bounds(num_variables_);
   Eigen::VectorXd upper_bounds(num_variables_);
 
-  ASSERT_TRUE(
-      constraint.computeQpConstraints(*scene_, constraint_matrix, lower_bounds, upper_bounds)
-          .has_value());
+  ASSERT_TRUE(constraint
+                  .computeQpConstraints(posed(*oink_, *scene_), constraint_matrix, lower_bounds,
+                                        upper_bounds)
+                  .has_value());
 
   // Expected bounds: +/- dt * v_max
   Eigen::VectorXd expected_upper = dt * v_max;
@@ -159,9 +167,10 @@ TEST_F(VelocityLimitTest, PerJointLimits) {
   Eigen::VectorXd lower_bounds(num_variables_);
   Eigen::VectorXd upper_bounds(num_variables_);
 
-  ASSERT_TRUE(
-      constraint.computeQpConstraints(*scene_, constraint_matrix, lower_bounds, upper_bounds)
-          .has_value());
+  ASSERT_TRUE(constraint
+                  .computeQpConstraints(posed(*oink_, *scene_), constraint_matrix, lower_bounds,
+                                        upper_bounds)
+                  .has_value());
 
   // Check each joint has correct bounds
   for (int i = 0; i < num_variables_; ++i) {
@@ -170,7 +179,7 @@ TEST_F(VelocityLimitTest, PerJointLimits) {
   }
 }
 
-// Test with zero velocity limit
+// Test with zero velocity limit (no motion allowed)
 TEST_F(VelocityLimitTest, ZeroVelocityLimit) {
   double dt = 0.01;
   Eigen::VectorXd v_max = Eigen::VectorXd::Zero(num_variables_);
@@ -181,18 +190,18 @@ TEST_F(VelocityLimitTest, ZeroVelocityLimit) {
   Eigen::VectorXd lower_bounds(num_variables_);
   Eigen::VectorXd upper_bounds(num_variables_);
 
-  ASSERT_TRUE(
-      constraint.computeQpConstraints(*scene_, constraint_matrix, lower_bounds, upper_bounds)
-          .has_value());
+  ASSERT_TRUE(constraint
+                  .computeQpConstraints(posed(*oink_, *scene_), constraint_matrix, lower_bounds,
+                                        upper_bounds)
+                  .has_value());
 
-  // Both bounds should be zero (no motion allowed)
   EXPECT_TRUE(upper_bounds.isApprox(Eigen::VectorXd::Zero(num_variables_)));
   EXPECT_TRUE(lower_bounds.isApprox(Eigen::VectorXd::Zero(num_variables_)));
 }
 
 // Test with very small timestep
 TEST_F(VelocityLimitTest, SmallTimestep) {
-  double dt = 1e-6;  // Very small timestep
+  double dt = 1e-6;
   Eigen::VectorXd v_max = Eigen::VectorXd::Ones(num_variables_) * 1.0;
 
   VelocityLimit constraint(*oink_, dt, v_max);
@@ -201,11 +210,11 @@ TEST_F(VelocityLimitTest, SmallTimestep) {
   Eigen::VectorXd lower_bounds(num_variables_);
   Eigen::VectorXd upper_bounds(num_variables_);
 
-  ASSERT_TRUE(
-      constraint.computeQpConstraints(*scene_, constraint_matrix, lower_bounds, upper_bounds)
-          .has_value());
+  ASSERT_TRUE(constraint
+                  .computeQpConstraints(posed(*oink_, *scene_), constraint_matrix, lower_bounds,
+                                        upper_bounds)
+                  .has_value());
 
-  // Bounds should be very small
   EXPECT_LT(upper_bounds.maxCoeff(), 1e-5);
   EXPECT_GT(lower_bounds.minCoeff(), -1e-5);
 }
@@ -221,9 +230,10 @@ TEST_F(VelocityLimitTest, LargeTimestep) {
   Eigen::VectorXd lower_bounds(num_variables_);
   Eigen::VectorXd upper_bounds(num_variables_);
 
-  ASSERT_TRUE(
-      constraint.computeQpConstraints(*scene_, constraint_matrix, lower_bounds, upper_bounds)
-          .has_value());
+  ASSERT_TRUE(constraint
+                  .computeQpConstraints(posed(*oink_, *scene_), constraint_matrix, lower_bounds,
+                                        upper_bounds)
+                  .has_value());
 
   // Bounds should be dt * v_max = 1.0 * 0.5 = 0.5
   EXPECT_TRUE(upper_bounds.isApprox(Eigen::VectorXd::Constant(num_variables_, 0.5)));
@@ -235,7 +245,6 @@ TEST_F(VelocityLimitTest, MismatchedVMaxSize) {
   double dt = 0.01;
   Eigen::VectorXd v_max = Eigen::VectorXd::Ones(num_variables_ - 1);  // Wrong size
 
-  // Constructor should throw std::invalid_argument due to size mismatch
   EXPECT_THROW({ VelocityLimit constraint(*oink_, dt, v_max); }, std::invalid_argument);
 }
 
@@ -251,8 +260,8 @@ TEST_F(VelocityLimitTest, MismatchedWorkspaceSize) {
   Eigen::VectorXd lower_bounds(num_variables_ - 1);
   Eigen::VectorXd upper_bounds(num_variables_ - 1);
 
-  auto result =
-      constraint.computeQpConstraints(*scene_, constraint_matrix, lower_bounds, upper_bounds);
+  auto result = constraint.computeQpConstraints(posed(*oink_, *scene_), constraint_matrix,
+                                                lower_bounds, upper_bounds);
 
   ASSERT_FALSE(result.has_value());
   EXPECT_TRUE(result.error().find("size mismatch") != std::string::npos);
@@ -265,16 +274,16 @@ TEST_F(VelocityLimitTest, ModifyDt) {
 
   VelocityLimit constraint(*oink_, dt, v_max);
 
-  // Change dt
   constraint.dt = 0.02;
 
   Eigen::MatrixXd constraint_matrix(num_variables_, num_variables_);
   Eigen::VectorXd lower_bounds(num_variables_);
   Eigen::VectorXd upper_bounds(num_variables_);
 
-  ASSERT_TRUE(
-      constraint.computeQpConstraints(*scene_, constraint_matrix, lower_bounds, upper_bounds)
-          .has_value());
+  ASSERT_TRUE(constraint
+                  .computeQpConstraints(posed(*oink_, *scene_), constraint_matrix, lower_bounds,
+                                        upper_bounds)
+                  .has_value());
 
   // Bounds should reflect new dt
   EXPECT_TRUE(upper_bounds.isApprox(Eigen::VectorXd::Constant(num_variables_, 0.02)));
@@ -288,16 +297,16 @@ TEST_F(VelocityLimitTest, ModifyVMax) {
 
   VelocityLimit constraint(*oink_, dt, v_max);
 
-  // Change v_max
   constraint.v_max = Eigen::VectorXd::Ones(num_variables_) * 2.0;
 
   Eigen::MatrixXd constraint_matrix(num_variables_, num_variables_);
   Eigen::VectorXd lower_bounds(num_variables_);
   Eigen::VectorXd upper_bounds(num_variables_);
 
-  ASSERT_TRUE(
-      constraint.computeQpConstraints(*scene_, constraint_matrix, lower_bounds, upper_bounds)
-          .has_value());
+  ASSERT_TRUE(constraint
+                  .computeQpConstraints(posed(*oink_, *scene_), constraint_matrix, lower_bounds,
+                                        upper_bounds)
+                  .has_value());
 
   // Bounds should reflect new v_max
   EXPECT_TRUE(upper_bounds.isApprox(Eigen::VectorXd::Constant(num_variables_, 0.02)));
