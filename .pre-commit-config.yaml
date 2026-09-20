@@ -38,10 +38,15 @@ repos:
       - id: sort-simple-yaml
       - id: trailing-whitespace
 
-  - repo: https://github.com/psf/black
-    rev: 25.12.0
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Ruff version.
+    rev: v0.16.8
     hooks:
-      - id: black
+      # Run the linter.
+      - id: ruff-check
+        args: [--fix]
+      # Run the formatter.
+      - id: ruff-format
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.1
@@ -55,6 +60,11 @@ repos:
     hooks:
       - id: clang-format
         files: \.(c|cpp|h|hpp)$
+
+  - repo: https://github.com/cheshirekow/cmake-format-precommit
+    rev: v0.6.10
+    hooks:
+      - id: cmake-format
 
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.38.0
@@ -78,7 +88,7 @@ repos:
 exclude: |
   (?x)^(
     .*/bindings/python/roboplan/.*\.pyi|
-    roboplan/include/tinyxml2/.*|
-    roboplan/include/tl/.*|
+    roboplan_core/include/tinyxml2/.*|
+    roboplan_core/include/tl/.*|
     roboplan_rrt/include/dynotree/.*
   )$
