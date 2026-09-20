@@ -2,20 +2,23 @@
 Unit tests for RRT planners in RoboPlan.
 """
 
-from pathlib import Path
-
 import numpy as np
 import pinocchio as pin
 import pytest
 
-from roboplan.core import JointConfiguration, Scene, computePathLength
+from roboplan.core import (
+    JointConfiguration,
+    Scene,
+    computePathLength,
+    loadUrdfSceneDescription,
+)
 from roboplan.example_models import get_package_models_dir, get_package_share_dir
 from roboplan.rrt import (
+    RRT,
     ConstraintProjector,
     ConstraintProjectorOptions,
     PoseConstraint,
     RRTOptions,
-    RRT,
 )
 
 
@@ -26,11 +29,13 @@ def test_scene() -> Scene:
     srdf_path = roboplan_models_dir / "ur_robot_model" / "ur5_gripper.srdf"
     package_paths = [get_package_share_dir()]
 
-    return Scene("test_scene", urdf_path, srdf_path, package_paths)
+    description = loadUrdfSceneDescription(urdf_path, package_paths)
+    scene = Scene("test_scene", description)
+    scene.importSrdf(srdf_path.read_text())
+    return scene
 
 
 def test_plan(test_scene: Scene) -> None:
-    # Ensure determinism in the test.
     test_scene.setRngSeed(286)
 
     options = RRTOptions()
@@ -54,11 +59,37 @@ def test_plan(test_scene: Scene) -> None:
     print(path)
 
 
+def test_plan_default_group(test_scene: Scene) -> None:
+    # Planning without a group name should work for model formats that don't require groups.
+    test_scene.setRngSeed(286)
+
+    options = RRTOptions()  # group_name defaults to "".
+    options.max_connection_distance = 1.0
+    options.collision_check_step_size = 0.05
+
+    rrt = RRT(test_scene, options)
+    rrt.setRngSeed(1234)
+
+    start = JointConfiguration()
+    start.positions = test_scene.randomCollisionFreePositions()
+    assert start.positions is not None
+
+    goal = JointConfiguration()
+    goal.positions = test_scene.randomCollisionFreePositions()
+    assert goal.positions is not None
+
+    path = rrt.plan(start, goal)
+    assert path is not None
+    # Previously the default group produced empty waypoints and joint names.
+    assert len(path.positions) >= 2
+    assert len(path.joint_names) > 0
+    assert all(len(q) == len(path.joint_names) for q in path.positions)
+
+
 def test_plan_rrt_star(test_scene: Scene) -> None:
     # Plan the same problem with and without RRT*. RRT* keeps rewiring and optimizing,
     # so its path must be equal or shorter than plain RRT.
 
-    # Ensure determinism in the test.
     test_scene.setRngSeed(286)
 
     start = JointConfiguration()
