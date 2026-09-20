@@ -28,7 +28,9 @@ SelfCollisionBarrier::SelfCollisionBarrier(const Oink& oink, const Scene& scene,
                                 std::to_string(n_collision_pairs) + ")");
   }
 
-  // Clip the requested pair count to what the scene actually has.
+  // Clip the requested pair count to what the scene actually has. The request is kept so that
+  // computeBarrier() can re-clip if the collision geometry changes later.
+  requested_collision_pairs = n_collision_pairs;
   const auto total_pairs = static_cast<int>(scene.getCollisionModel().collisionPairs.size());
   n_collision_pairs = std::min(n_collision_pairs, total_pairs);
 
@@ -41,29 +43,44 @@ SelfCollisionBarrier::SelfCollisionBarrier(const Oink& oink, const Scene& scene,
   joint_jacobian2 = Eigen::MatrixXd::Zero(6, nv);
   full_row = Eigen::RowVectorXd::Zero(nv);
 
-  // Share the Oink solver's collision scratch. Every distance and joint-Jacobian query below runs
-  // on this context, so the barrier never touches scene state. The context is a snapshot of the
-  // scene's collision geometry taken when the Oink was constructed.
-  collision_context = &oink.getCollisionContext();
+  // Track the Oink solver rather than its context. Every distance and joint-Jacobian query below
+  // runs on the solver's current context, so the barrier never touches scene state and never holds
+  // a context the solver has since replaced.
+  this->oink = &oink;
 }
 
-int SelfCollisionBarrier::getNumBarriers(const Scene& /*scene*/) const { return n_collision_pairs; }
+int SelfCollisionBarrier::getNumBarriers(const SceneContext& /*context*/) const {
+  return n_collision_pairs;
+}
 
-tl::expected<void, std::string> SelfCollisionBarrier::computeBarrier(const Scene& scene) {
-  const auto& geom_model = collision_context->getCollisionModel();
+tl::expected<void, std::string> SelfCollisionBarrier::computeBarrier(const SceneContext& context) {
+  const auto& scene_context = this->context();
+  const auto& geom_model = scene_context.getCollisionModel();
   const auto total_pairs = static_cast<int>(geom_model.collisionPairs.size());
-  if (total_pairs < n_collision_pairs) {
-    return tl::make_unexpected("SelfCollisionBarrier: scene has fewer collision pairs (" +
-                               std::to_string(total_pairs) + ") than the barrier dimension (" +
-                               std::to_string(n_collision_pairs) + ")");
+  if (total_pairs <= 0) {
+    return tl::make_unexpected("SelfCollisionBarrier: scene has no collision pairs to constrain");
   }
 
-  // Update geometry placements and recompute pair distances on the barrier's own scratch. Pairs
-  // whose bounding boxes are farther apart than d_max skip exact narrow-phase distance.
-  const Eigen::VectorXd& q = scene.getCurrentJointPositions();
-  collision_context->computeDistances(q, d_max);
+  // Re-clip the barrier dimension to the geometry the solver's context currently holds. Adding or
+  // removing collision pairs changes total_pairs, and every buffer below is sized from it, so this
+  // must run before they are written. Oink queries getNumBarriers() after computeBarrier(), so a
+  // changed dimension is picked up when the QP is sized.
+  const int active_pairs = std::min(requested_collision_pairs, total_pairs);
+  if (active_pairs != n_collision_pairs) {
+    n_collision_pairs = active_pairs;
+    initializeStorage(n_collision_pairs, oink->num_variables);
+    closest_pair_indices.assign(n_collision_pairs, 0);
+  }
+  if (all_distances.size() != total_pairs) {
+    all_distances = Eigen::VectorXd::Zero(total_pairs);
+  }
 
-  const auto& geom_data = collision_context->getCollisionData();
+  // Update geometry placements and recompute pair distances on the solver's context. Pairs
+  // whose bounding boxes are farther apart than d_max skip exact narrow-phase distance.
+  const Eigen::VectorXd& q = context.getJointPositions();
+  scene_context.computeDistances(q, d_max);
+
+  const auto& geom_data = scene_context.getCollisionData();
   for (int k = 0; k < total_pairs; ++k) {
     all_distances[k] = geom_data.distanceResults[k].min_distance;
   }
@@ -83,16 +100,17 @@ tl::expected<void, std::string> SelfCollisionBarrier::computeBarrier(const Scene
   return {};
 }
 
-tl::expected<void, std::string> SelfCollisionBarrier::computeJacobian(const Scene& scene) {
-  const auto& model = collision_context->getModel();
-  const auto& data = collision_context->getData();
-  const auto& geom_model = collision_context->getCollisionModel();
-  const auto& geom_data = collision_context->getCollisionData();
+tl::expected<void, std::string> SelfCollisionBarrier::computeJacobian(const SceneContext& context) {
+  const auto& scene_context = this->context();
+  const auto& model = scene_context.getModel();
+  const auto& data = scene_context.getData();
+  const auto& geom_model = scene_context.getCollisionModel();
+  const auto& geom_data = scene_context.getCollisionData();
 
   // Joint Jacobians are needed for parent-joint Jacobian extraction below. They share the same
   // scratch Data as computeDistances(), so its forward kinematics and the witness points line up.
-  const Eigen::VectorXd& q = scene.getCurrentJointPositions();
-  collision_context->computeJointJacobians(q);
+  const Eigen::VectorXd& q = context.getJointPositions();
+  scene_context.computeJointJacobians(q);
 
   // NOTE: collision distances should have already been computed in computeBarrier(),
   // so we can reuse the witness points in geom_data without recomputing distances.
@@ -155,13 +173,14 @@ tl::expected<void, std::string> SelfCollisionBarrier::computeJacobian(const Scen
 
 tl::expected<double, std::string> SelfCollisionBarrier::evaluateAtConfiguration(
     const pinocchio::Model& /*model*/, pinocchio::Data& /*data*/, const Eigen::VectorXd& q) const {
-  // Refresh geometry placements at q on the barrier's own scratch, then run narrow-phase distance
+  // Refresh geometry placements at q on the solver's context, then run narrow-phase distance
   // only on the pairs that computeBarrier() identified as closest. This skips the full pair sweep
   // that pinocchio::computeDistances() would otherwise do, and never touches scene state.
-  const auto& model = collision_context->getModel();
-  auto& data = collision_context->getData();
-  const auto& geom_model = collision_context->getCollisionModel();
-  auto& geom_data = collision_context->getCollisionData();
+  const auto& scene_context = this->context();
+  const auto& model = scene_context.getModel();
+  auto& data = scene_context.getData();
+  const auto& geom_model = scene_context.getCollisionModel();
+  auto& geom_data = scene_context.getCollisionData();
   pinocchio::updateGeometryPlacements(model, data, geom_model, geom_data, q);
 
   double min_distance = std::numeric_limits<double>::infinity();
