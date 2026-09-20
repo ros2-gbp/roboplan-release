@@ -1,0 +1,61 @@
+ros-rolling-roboplan-cartesian-planning (0.7.0-1resolute) resolute; urgency=high
+
+  * Pre-0.7.0 docs and consistency passthrough (#324 <https://github.com/open-planning/roboplan/issues/324>)
+  * Move YAML loading out of constructor (#348 <https://github.com/open-planning/roboplan/issues/348>)
+  * Add group helpers, exercise them via new importSrdf (#344 <https://github.com/open-planning/roboplan/issues/344>)
+  * Move file I/O out of Scene constructor, support loading MJCF (#300 <https://github.com/open-planning/roboplan/issues/300>)
+  * Add ruff check (#336 <https://github.com/open-planning/roboplan/issues/336>)
+  * Fix dylib resolution for bindings on macOS with colcon (#306 <https://github.com/open-planning/roboplan/issues/306>)
+  * Per package PyPi publishing and runtime path setting (#326 <https://github.com/open-planning/roboplan/issues/326>)
+  * Rename roboplan-core's export target (#329 <https://github.com/open-planning/roboplan/issues/329>)
+  * Add toFullJointVelocities (#297 <https://github.com/open-planning/roboplan/issues/297>)
+  * General CMake cleanup (#319 <https://github.com/open-planning/roboplan/issues/319>)
+  * Use pixi-build to declare Conda dependencies for each package (#301 <https://github.com/open-planning/roboplan/issues/301>)
+  * Remove cmake build-time package config hack (#316 <https://github.com/open-planning/roboplan/issues/316>)
+  * Put the Python install logic back into its original CMake location (#315 <https://github.com/open-planning/roboplan/issues/315>)
+  * Add Pixi ROS targets and CI (#308 <https://github.com/open-planning/roboplan/issues/308>)
+  * Add cmake-format to pre-commit, and run it (#317 <https://github.com/open-planning/roboplan/issues/317>)
+  * Make cmeel packages independently buildable (#312 <https://github.com/open-planning/roboplan/issues/312>)
+  * Drop scikit-build in favor of direct usage of cmeel (#304 <https://github.com/open-planning/roboplan/issues/304>)
+  * Constrain scope of DLL loader manipulation (#302 <https://github.com/open-planning/roboplan/issues/302>)
+  * Create CMake superbuild to consolidate build config (#295 <https://github.com/open-planning/roboplan/issues/295>)
+  * Migrate to SceneContext class for thread-safe operation (#286 <https://github.com/open-planning/roboplan/issues/286>)
+  * Contributors: Erik Holum, Ezra Brooks, Sebastian Castro, Sebastian Jahr
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Sat, 19 Sep 2026 04:00:00 -0000
+
+ros-rolling-roboplan-cartesian-planning (0.6.1-1resolute) resolute; urgency=high
+
+  * Depend on typing_extensions via rosdep (#283 <https://github.com/open-planning/roboplan/issues/283>)
+  * Contributors: Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Thu, 20 Aug 2026 04:00:00 -0000
+
+ros-rolling-roboplan-cartesian-planning (0.6.0-1resolute) resolute; urgency=high
+
+  * Improve Cartesian path planner (#277 <https://github.com/open-planning/roboplan/issues/277>)
+  * Fix MacOS rpath issues (#275 <https://github.com/open-planning/roboplan/issues/275>)
+  * Fix Python bindings installs for ROS + Windows (#272 <https://github.com/open-planning/roboplan/issues/272>)
+  * Windows support through Pixi (#271 <https://github.com/open-planning/roboplan/issues/271>)
+  * Switch OInK backend from OSQP to ProxQP (#259 <https://github.com/open-planning/roboplan/issues/259>)
+    Co-authored-by: Sebastian Castro <mailto:sebas.a.castro@gmail.com>
+  * Contributors: Erik Holum, Sebastian Castro, Sebastian Jahr
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Fri, 31 Jul 2026 04:00:00 -0000
+
+ros-rolling-roboplan-cartesian-planning (0.5.1-1resolute) resolute; urgency=high
+
+  * Make nanobind-dev and python3-dev build dependencies in package.xml (#264 <https://github.com/open-planning/roboplan/issues/264>)
+  * Contributors: Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Mon, 13 Jul 2026 04:00:00 -0000
+
+ros-rolling-roboplan-cartesian-planning (0.5.0-1resolute) resolute; urgency=high
+
+  * Add pixi Support for osx-arm64 and missing docs pages (#248 <https://github.com/open-planning/roboplan/issues/248>)
+  * Cartesian path planner (#240 <https://github.com/open-planning/roboplan/issues/240>)
+  * Contributors: Erik Holum, Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Tue, 07 Jul 2026 04:00:00 -0000
+
+
