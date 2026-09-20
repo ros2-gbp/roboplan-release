@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <stdexcept>
 
 #include <Eigen/Dense>
 #include <memory>
@@ -8,6 +9,7 @@
 #include <roboplan_example_models/resources.hpp>
 #include <roboplan_oink/optimal_ik.hpp>
 #include <roboplan_oink/tasks/frame.hpp>
+#include <test_utils.hpp>
 
 namespace roboplan {
 
@@ -21,8 +23,12 @@ protected:
     package_paths_ = {example_models::get_package_share_dir()};
     yaml_config_path_ = model_prefix / "ur_robot_model" / "ur5_config.yaml";
 
-    scene_ = std::make_shared<Scene>("test_scene", urdf_path_, srdf_path_, package_paths_,
-                                     yaml_config_path_);
+    const auto description = loadUrdfSceneDescription(urdf_path_, package_paths_);
+    scene_ = std::make_shared<Scene>("test_scene", description);
+    scene_->importJointLimitsFromConfig(loadJointLimitsConfig(yaml_config_path_));
+    if (const auto imported = scene_->importSrdf(loadTextFile(srdf_path_)); !imported) {
+      throw std::runtime_error(imported.error());
+    }
     oink_ = std::make_shared<Oink>(*scene_);
 
     const auto& model = scene_->getModel();
@@ -83,7 +89,7 @@ TEST_F(FrameTaskTest, ErrorAtIdentity) {
   FrameTask task(*oink_, *scene_, target_pose);
 
   // Compute error
-  auto result = task.computeError(*scene_);
+  auto result = task.computeError(posed(*oink_, *scene_));
 
   ASSERT_TRUE(result.has_value()) << "computeError failed: " << result.error();
   EXPECT_EQ(task.error_container.size(), 6);
@@ -111,7 +117,7 @@ TEST_F(FrameTaskTest, ErrorWithTranslation) {
   FrameTask task(*oink_, *scene_, target_config);
 
   // Compute error
-  auto result = task.computeError(*scene_);
+  auto result = task.computeError(posed(*oink_, *scene_));
 
   ASSERT_TRUE(result.has_value());
   EXPECT_EQ(task.error_container.size(), 6);
@@ -144,7 +150,7 @@ TEST_F(FrameTaskTest, ErrorWithRotation) {
   FrameTask task(*oink_, *scene_, target_config);
 
   // Compute error
-  auto result = task.computeError(*scene_);
+  auto result = task.computeError(posed(*oink_, *scene_));
 
   ASSERT_TRUE(result.has_value());
   EXPECT_EQ(task.error_container.size(), 6);
@@ -166,7 +172,7 @@ TEST_F(FrameTaskTest, JacobianDimensions) {
 
   FrameTask task(*oink_, *scene_, target_pose);
 
-  auto result = task.computeJacobian(*scene_);
+  auto result = task.computeJacobian(posed(*oink_, *scene_));
 
   ASSERT_TRUE(result.has_value()) << "computeJacobian failed: " << result.error();
   EXPECT_EQ(task.jacobian_container.rows(), 6);
@@ -181,7 +187,7 @@ TEST_F(FrameTaskTest, JacobianNonZero) {
 
   FrameTask task(*oink_, *scene_, target_pose);
 
-  auto result = task.computeJacobian(*scene_);
+  auto result = task.computeJacobian(posed(*oink_, *scene_));
 
   ASSERT_TRUE(result.has_value());
 
@@ -201,7 +207,7 @@ TEST_F(FrameTaskTest, QpObjectiveComputation) {
   // Compute QP objective matrices (this internally calls computeJacobian and computeError)
   Eigen::MatrixXd H(num_variables_, num_variables_);
   Eigen::VectorXd c(num_variables_);
-  auto result = task.computeQpObjective(*scene_, H, c);
+  auto result = task.computeQpObjective(posed(*oink_, *scene_), H, c);
 
   ASSERT_TRUE(result.has_value());
 
@@ -275,7 +281,7 @@ TEST_F(FrameTaskTest, TaskGainParameter) {
   // Both should compute without error
   Eigen::MatrixXd H(num_variables_, num_variables_);
   Eigen::VectorXd c(num_variables_);
-  auto result = task_low_gain.computeQpObjective(*scene_, H, c);
+  auto result = task_low_gain.computeQpObjective(posed(*oink_, *scene_), H, c);
   ASSERT_TRUE(result.has_value());
 }
 
@@ -298,7 +304,7 @@ TEST_F(FrameTaskTest, ErrorPointsTowardTarget) {
 
   FrameTask task(*oink_, *scene_, target_config);
 
-  auto result = task.computeError(*scene_);
+  auto result = task.computeError(posed(*oink_, *scene_));
   ASSERT_TRUE(result.has_value());
 
   // The error vector in local frame should point toward target
@@ -381,7 +387,7 @@ TEST_F(FrameTaskTest, PositionErrorWithoutSaturation) {
   FrameTaskOptions options{.max_position_error = std::numeric_limits<double>::infinity()};
   FrameTask task(*oink_, *scene_, target_config, options);
 
-  auto result = task.computeError(*scene_);
+  auto result = task.computeError(posed(*oink_, *scene_));
   ASSERT_TRUE(result.has_value());
 
   // Position error should be approximately 1.0m (unsaturated)
@@ -409,7 +415,7 @@ TEST_F(FrameTaskTest, PositionErrorSaturationBounds) {
   FrameTaskOptions options{.max_position_error = 0.1};
   FrameTask task(*oink_, *scene_, target_config, options);
 
-  auto result = task.computeError(*scene_);
+  auto result = task.computeError(posed(*oink_, *scene_));
   ASSERT_TRUE(result.has_value());
 
   // Position error should be bounded by saturation limit
@@ -439,7 +445,7 @@ TEST_F(FrameTaskTest, RotationErrorWithoutSaturation) {
   FrameTaskOptions options{.max_rotation_error = std::numeric_limits<double>::infinity()};
   FrameTask task(*oink_, *scene_, target_config, options);
 
-  auto result = task.computeError(*scene_);
+  auto result = task.computeError(posed(*oink_, *scene_));
   ASSERT_TRUE(result.has_value());
 
   // Rotation error should be approximately pi (unsaturated)
@@ -468,7 +474,7 @@ TEST_F(FrameTaskTest, RotationErrorSaturationBounds) {
   FrameTaskOptions options{.max_rotation_error = 0.5};
   FrameTask task(*oink_, *scene_, target_config, options);
 
-  auto result = task.computeError(*scene_);
+  auto result = task.computeError(posed(*oink_, *scene_));
   ASSERT_TRUE(result.has_value());
 
   // Rotation error should be bounded by saturation limit
@@ -498,7 +504,7 @@ TEST_F(FrameTaskTest, SmallErrorsNotSaturated) {
                            .max_rotation_error = std::numeric_limits<double>::infinity()};
   FrameTask task(*oink_, *scene_, target_config, options);
 
-  auto result = task.computeError(*scene_);
+  auto result = task.computeError(posed(*oink_, *scene_));
   ASSERT_TRUE(result.has_value());
 
   // Position error should be exactly 5cm without saturation
@@ -525,7 +531,7 @@ TEST_F(FrameTaskTest, BackwardCompatibilityNoSaturation) {
   // Create task with default options (infinite limits)
   FrameTask task(*oink_, *scene_, target_config);
 
-  auto result = task.computeError(*scene_);
+  auto result = task.computeError(posed(*oink_, *scene_));
   ASSERT_TRUE(result.has_value());
 
   // Position error should NOT be saturated (default limits are infinite)
@@ -586,10 +592,10 @@ TEST_F(FrameTaskTest, BaseFrameEqualsTipZeroError) {
 
   const auto q = scene_->getCurrentJointPositions();
   // Run computeJacobian first (updates oMf, as required by computeError)
-  auto jac_result = task.computeJacobian(*scene_);
+  auto jac_result = task.computeJacobian(posed(*oink_, *scene_));
   ASSERT_TRUE(jac_result.has_value());
 
-  auto err_result = task.computeError(*scene_);
+  auto err_result = task.computeError(posed(*oink_, *scene_));
   ASSERT_TRUE(err_result.has_value());
 
   EXPECT_NEAR(task.error_container.norm(), 0.0, 1e-10)
@@ -605,7 +611,7 @@ TEST_F(FrameTaskTest, BaseFrameJacobianZeroWhenTipEqualsBase) {
 
   FrameTask task(*oink_, *scene_, target);
 
-  auto result = task.computeJacobian(*scene_);
+  auto result = task.computeJacobian(posed(*oink_, *scene_));
   ASSERT_TRUE(result.has_value());
 
   EXPECT_NEAR(task.jacobian_container.norm(), 0.0, 1e-10)
@@ -631,10 +637,10 @@ TEST_F(FrameTaskTest, BaseFrameErrorAtCurrentRelativePose) {
 
   FrameTask task(*oink_, *scene_, target);
 
-  auto jac_result = task.computeJacobian(*scene_);  // updates oMf
+  auto jac_result = task.computeJacobian(posed(*oink_, *scene_));  // updates oMf
   ASSERT_TRUE(jac_result.has_value());
 
-  auto err_result = task.computeError(*scene_);
+  auto err_result = task.computeError(posed(*oink_, *scene_));
   ASSERT_TRUE(err_result.has_value());
 
   EXPECT_NEAR(task.error_container.norm(), 0.0, 1e-10)
@@ -650,7 +656,7 @@ TEST_F(FrameTaskTest, BaseFrameJacobianDimensions) {
 
   FrameTask task(*oink_, *scene_, target);
 
-  auto result = task.computeJacobian(*scene_);
+  auto result = task.computeJacobian(posed(*oink_, *scene_));
   ASSERT_TRUE(result.has_value());
   EXPECT_EQ(task.jacobian_container.rows(), 6);
   EXPECT_EQ(task.jacobian_container.cols(), num_variables_);
@@ -678,7 +684,7 @@ TEST_F(FrameTaskTest, CombinedPositionAndRotationError) {
                            .max_rotation_error = std::numeric_limits<double>::infinity()};
   FrameTask task(*oink_, *scene_, target_config, options);
 
-  auto result = task.computeError(*scene_);
+  auto result = task.computeError(posed(*oink_, *scene_));
   ASSERT_TRUE(result.has_value());
 
   // Errors should be approximately 1.0m and pi/2 without saturation
@@ -712,7 +718,7 @@ TEST_F(FrameTaskTest, CombinedPositionAndRotationSaturationBounds) {
   FrameTaskOptions options{.max_position_error = 0.15, .max_rotation_error = 0.3};
   FrameTask task(*oink_, *scene_, target_config, options);
 
-  auto result = task.computeError(*scene_);
+  auto result = task.computeError(posed(*oink_, *scene_));
   ASSERT_TRUE(result.has_value());
 
   // Both errors should be bounded by their respective limits
