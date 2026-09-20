@@ -1,9 +1,7 @@
 """
-Keyboard teleoperation example for robot end-effector jogging.
+Keyboard jogging of one or more end-effectors in Cartesian space, tracked through OInK.
 
-Use keyboard input to move one or more robot end-effectors in Cartesian space,
-tracked through OInK with joint position and velocity limits. A mild
-ConfigurationTask regularization prevents unwanted nullspace drift.
+Joint position and velocity limits apply, and a mild ConfigurationTask limits nullspace drift.
 
 Keyboard controls (focus the terminal window first):
 
@@ -41,12 +39,16 @@ import numpy as np
 import pinocchio as pin
 import tyro
 import xacro
+from common import get_home_configuration, get_model_data
 from pinocchio.visualize import ViserVisualizer
 from pynput import keyboard
 
-from common import get_home_configuration, get_model_data
-from roboplan.visualization import se3_to_viser_wxyz
-from roboplan.core import CartesianConfiguration, Scene
+from roboplan.core import (
+    CartesianConfiguration,
+    Scene,
+    loadJointLimitsConfig,
+    loadUrdfSceneDescriptionFromXml,
+)
 from roboplan.example_models import get_package_share_dir
 from roboplan.filters import SE3LowPassFilter
 from roboplan.optimal_ik import (
@@ -58,13 +60,13 @@ from roboplan.optimal_ik import (
     PositionLimit,
     VelocityLimit,
 )
+from roboplan.visualization import se3_to_viser_wxyz
 
 
 @dataclass
 class TeleopKeyboardState:
-    """Tracks which teleop keys are currently held or triggered.
+    """Tracks which teleop keys are held or triggered, shared by the listener and control loop.
 
-    Shared between the keyboard listener thread and the control loop.
     Access all fields under ``lock``.
     """
 
@@ -281,8 +283,7 @@ def main(
 ) -> None:
     """Teleoperate robot end-effectors using keyboard input.
 
-    Focus the terminal window to capture keyboard input while Viser is open in
-    the browser.
+    Focus the terminal window to capture key presses.
 
     Args:
         model: Robot model name from roboplan_examples/python/common.py.
@@ -330,11 +331,12 @@ def main(
 
     scene = Scene(
         "teleop_scene",
-        urdf=urdf_xml,
-        srdf=srdf_xml,
-        package_paths=package_paths,
-        yaml_config_path=model_data.yaml_config_path,
+        loadUrdfSceneDescriptionFromXml(urdf_xml, package_paths),
     )
+    scene.importJointLimitsFromConfig(
+        loadJointLimitsConfig(model_data.yaml_config_path)
+    )
+    scene.importSrdf(srdf_xml)
 
     joint_group = model_data.default_joint_group
     joint_names = scene.getJointGroupInfo(joint_group).joint_names
@@ -354,8 +356,8 @@ def main(
     print("  i/k: +roll/-roll   j/l: +pitch/-pitch   u/o: +yaw/-yaw")
     print("  space: pause/resume   r: reset home   t: reset target   x: quit\n")
 
-    # Create a redundant Pinocchio model just for visualization with mimic joints.
-    # When Pinocchio 4.x releases nanobind bindings, we should be able to directly grab the model from the scene instead.
+    # Build a separate Pinocchio model (with mimic joints) for visualization. Until Pinocchio
+    # and Coal have nanobind bindings, it cannot be taken from the scene.
     model_pin = pin.buildModelFromXML(urdf_xml, mimic=True)
     collision_model = pin.buildGeomFromUrdfString(
         model_pin,
@@ -404,9 +406,8 @@ def main(
         goal.tip_frame = ee_frame_name
         frame_tasks.append(FrameTask(oink, scene, goal, frame_task_options))
 
-    # Mild ConfigurationTask regularization to reduce nullspace drift.
-    # config_task_gain is kept small (default 1e-4) so it does not compete
-    # with the Cartesian frame tasks; it only acts in the null space.
+    # Mild ConfigurationTask regularization to reduce nullspace drift. config_task_gain is
+    # kept small (default 1e-4) so it does not compete with the frame tasks.
     config_task = ConfigurationTask(
         oink,
         q_home[oink.q_indices],
@@ -449,8 +450,7 @@ def main(
         initial_value="world",
     )
 
-    # Only show the active-EE selector when there are multiple end-effectors
-    # to choose from. For single-EE models it would be meaningless.
+    # The active-EE selector only makes sense with multiple end-effectors.
     active_ee_dropdown = None
     if len(ee_frame_names) > 1:
         active_ee_dropdown = viz.viewer.gui.add_dropdown(
@@ -462,7 +462,6 @@ def main(
     reset_home_button = viz.viewer.gui.add_button("Reset to home")
     reset_target_button = viz.viewer.gui.add_button("Reset target to current EE")
 
-    # Threading events for GUI-triggered resets.
     gui_reset_home = threading.Event()
     gui_reset_target = threading.Event()
 
@@ -641,7 +640,7 @@ def main(
 
             # --- Solve OInK and integrate ---
             try:
-                oink.solveIk(scene, tasks, constraints, delta_q, regularization)
+                oink.solveIk(q_current, tasks, constraints, delta_q, regularization)
             except RuntimeError as exc:
                 print(f"Warning: OInK failed: {exc}")
                 delta_q[:] = 0.0
