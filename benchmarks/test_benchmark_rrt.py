@@ -1,15 +1,19 @@
-import pytest
 import sys
-import xacro
-
-from roboplan.core import JointConfiguration, Scene
-from roboplan.example_models import get_package_share_dir
-from roboplan.rrt import RRTOptions, RRT
-
-# We don't build the bindings examples, so we just include the relative
-# directory manually.
 from pathlib import Path
 
+import pytest
+import xacro
+
+from roboplan.core import (
+    JointConfiguration,
+    Scene,
+    loadJointLimitsConfig,
+    loadUrdfSceneDescriptionFromXml,
+)
+from roboplan.example_models import get_package_share_dir
+from roboplan.rrt import RRT, RRTOptions
+
+# The examples are not an installed package, so add their directory to the path to import `common`.
 examples_dir = Path(__file__).parent.parent / "roboplan_examples" / "python"
 sys.path.insert(0, str(examples_dir))
 
@@ -18,8 +22,7 @@ from common import get_model_data
 
 def solve(scene: Scene, rrt: RRT, q_indices, seed: int = 1234):
     """
-    Runs an RRT test by sampling random, collision-free joint configurations
-    then attempting to plan a path between them.
+    Plans between two random collision-free configurations.
 
     Returns 1 if planning was successful, 0 otherwise.
     """
@@ -49,7 +52,7 @@ def solve_many(
     scene: Scene, rrt: RRT, q_indices, iterations: int = 10, seed: int = 1234
 ):
     """
-    Runs the specified number of iterations of RRT with a random seed.
+    Runs `iterations` solves, seeded with `seed`, `seed + 1`, and so on.
 
     Returns the number of successful solves.
     """
@@ -68,17 +71,18 @@ def create_scene(model_name: str) -> Scene:
 
     scene = Scene(
         f"{model_name}_benchmark_scene",
-        urdf=urdf_xml,
-        srdf=srdf_xml,
-        package_paths=package_paths,
-        yaml_config_path=model_data.yaml_config_path,
+        loadUrdfSceneDescriptionFromXml(urdf_xml, package_paths),
     )
+    scene.importJointLimitsFromConfig(
+        loadJointLimitsConfig(model_data.yaml_config_path)
+    )
+    scene.importSrdf(srdf_xml)
     return scene
 
 
 @pytest.fixture(scope="session", params=["so101", "kinova", "ur5", "franka", "dual"])
 def benchmark_setup(request):
-    """Scene and RRT configuration aligned with example_rrt.py."""
+    """Scene and joint group for each model, built as in example_rrt.py."""
     model_name = request.param
     model_data = get_model_data()[model_name]
     scene = create_scene(model_name)

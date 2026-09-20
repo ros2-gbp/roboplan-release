@@ -1,11 +1,14 @@
 #include <gtest/gtest.h>
+#include <stdexcept>
 
 #include <Eigen/Dense>
 #include <memory>
 
 #include <roboplan/core/scene.hpp>
 #include <roboplan_example_models/resources.hpp>
+#include <roboplan_oink/optimal_ik.hpp>
 #include <roboplan_oink/tasks/configuration.hpp>
+#include <test_utils.hpp>
 
 namespace roboplan {
 
@@ -19,8 +22,12 @@ protected:
     package_paths_ = {example_models::get_package_share_dir()};
     yaml_config_path_ = model_prefix / "ur_robot_model" / "ur5_config.yaml";
 
-    scene_ = std::make_shared<Scene>("test_scene", urdf_path_, srdf_path_, package_paths_,
-                                     yaml_config_path_);
+    const auto description = loadUrdfSceneDescription(urdf_path_, package_paths_);
+    scene_ = std::make_shared<Scene>("test_scene", description);
+    scene_->importJointLimitsFromConfig(loadJointLimitsConfig(yaml_config_path_));
+    if (const auto imported = scene_->importSrdf(loadTextFile(srdf_path_)); !imported) {
+      throw std::runtime_error(imported.error());
+    }
     oink_ = std::make_shared<Oink>(*scene_);
 
     const auto& model = scene_->getModel();
@@ -86,7 +93,7 @@ TEST_F(ConfigurationTaskTest, ErrorAtCurrentConfig) {
   ConfigurationTask task(*oink_, target_q, joint_weights);
 
   // Compute error
-  auto result = task.computeError(*scene_);
+  auto result = task.computeError(posed(*oink_, *scene_));
 
   ASSERT_TRUE(result.has_value()) << "computeError failed: " << result.error();
   EXPECT_EQ(task.error_container.size(), nv_);
@@ -108,7 +115,7 @@ TEST_F(ConfigurationTaskTest, ErrorWithOffset) {
   ConfigurationTask task(*oink_, target_q, joint_weights);
 
   // Compute error
-  auto result = task.computeError(*scene_);
+  auto result = task.computeError(posed(*oink_, *scene_));
 
   ASSERT_TRUE(result.has_value());
   EXPECT_EQ(task.error_container.size(), nv_);
@@ -132,7 +139,7 @@ TEST_F(ConfigurationTaskTest, SetTargetConfiguration) {
   ConfigurationTask task(*oink_, target_q, joint_weights);
 
   // At the original (current) target, the error should be zero.
-  ASSERT_TRUE(task.computeError(*scene_).has_value());
+  ASSERT_TRUE(task.computeError(posed(*oink_, *scene_)).has_value());
   EXPECT_NEAR(task.error_container.norm(), 0.0, 1e-10);
 
   // Retarget at runtime to a new configuration with an offset on the first joint.
@@ -143,7 +150,7 @@ TEST_F(ConfigurationTaskTest, SetTargetConfiguration) {
   EXPECT_TRUE(task.target_q.isApprox(new_target));
 
   // The error should now reflect the new target.
-  ASSERT_TRUE(task.computeError(*scene_).has_value());
+  ASSERT_TRUE(task.computeError(posed(*oink_, *scene_)).has_value());
   EXPECT_NEAR(task.error_container(0), 0.25, 1e-10);
   for (int i = 1; i < nv_; ++i) {
     EXPECT_NEAR(task.error_container(i), 0.0, 1e-10);
@@ -168,7 +175,7 @@ TEST_F(ConfigurationTaskTest, JacobianIsIdentity) {
 
   ConfigurationTask task(*oink_, target_q, joint_weights);
 
-  auto result = task.computeJacobian(*scene_);
+  auto result = task.computeJacobian(posed(*oink_, *scene_));
 
   ASSERT_TRUE(result.has_value()) << "computeJacobian failed: " << result.error();
   EXPECT_EQ(task.jacobian_container.rows(), nv_);
@@ -195,7 +202,7 @@ TEST_F(ConfigurationTaskTest, QpObjectiveComputation) {
   // Compute QP objective matrices (this internally calls computeJacobian and computeError)
   Eigen::MatrixXd H(nv_, nv_);
   Eigen::VectorXd c(nv_);
-  auto result = task.computeQpObjective(*scene_, H, c);
+  auto result = task.computeQpObjective(posed(*oink_, *scene_), H, c);
   ASSERT_TRUE(result.has_value());
 
   // H should be positive semi-definite (diagonal elements >= 0)
@@ -259,7 +266,7 @@ TEST_F(ConfigurationTaskTest, ZeroWeightJointsIgnored) {
   // Compute QP objective
   Eigen::MatrixXd H(nv_, nv_);
   Eigen::VectorXd c(nv_);
-  auto result = task.computeQpObjective(*scene_, H, c);
+  auto result = task.computeQpObjective(posed(*oink_, *scene_), H, c);
   ASSERT_TRUE(result.has_value());
 
   // First row/column of H should be effectively just damping
@@ -277,7 +284,7 @@ TEST_F(ConfigurationTaskTest, InvalidTargetSize) {
 
   ConfigurationTask task(*oink_, target_q, joint_weights);
 
-  auto result = task.computeError(*scene_);
+  auto result = task.computeError(posed(*oink_, *scene_));
 
   ASSERT_FALSE(result.has_value());
   EXPECT_TRUE(result.error().find("size") != std::string::npos);
@@ -308,7 +315,7 @@ TEST_F(ConfigurationTaskTest, TaskGainParameter) {
   // Both should compute without error
   Eigen::MatrixXd H(nv_, nv_);
   Eigen::VectorXd c(nv_);
-  auto result = task_low_gain.computeQpObjective(*scene_, H, c);
+  auto result = task_low_gain.computeQpObjective(posed(*oink_, *scene_), H, c);
   ASSERT_TRUE(result.has_value());
 }
 
@@ -329,10 +336,10 @@ TEST_F(ConfigurationTaskTest, ErrorDirectionMatchesJacobian) {
   ConfigurationTask task(*oink_, target_q, joint_weights, options);
 
   // Compute error and Jacobian
-  auto error_result = task.computeError(*scene_);
+  auto error_result = task.computeError(posed(*oink_, *scene_));
   ASSERT_TRUE(error_result.has_value());
 
-  auto jacobian_result = task.computeJacobian(*scene_);
+  auto jacobian_result = task.computeJacobian(posed(*oink_, *scene_));
   ASSERT_TRUE(jacobian_result.has_value());
 
   // For the QP objective: min ||J*dq + gain*e||^2
@@ -360,7 +367,7 @@ TEST_F(ConfigurationTaskTest, ErrorPointsTowardTarget) {
 
   ConfigurationTask task(*oink_, target_q, joint_weights);
 
-  auto result = task.computeError(*scene_);
+  auto result = task.computeError(posed(*oink_, *scene_));
   ASSERT_TRUE(result.has_value());
 
   // Error should be positive (pointing toward positive target)
@@ -373,7 +380,7 @@ TEST_F(ConfigurationTaskTest, ErrorPointsTowardTarget) {
   target_q = Eigen::VectorXd::Zero(nq_);
 
   ConfigurationTask task2(*oink_, target_q, joint_weights);
-  auto result2 = task2.computeError(*scene_);
+  auto result2 = task2.computeError(posed(*oink_, *scene_));
   ASSERT_TRUE(result2.has_value());
 
   // Error should be negative (pointing toward zero target from positive current)
