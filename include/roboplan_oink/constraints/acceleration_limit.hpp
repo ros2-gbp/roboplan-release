@@ -64,7 +64,7 @@ struct AccelerationLimit : public Constraints {
   ///     oink.solveIk(scene, tasks, constraints, barriers, delta_q);
   ///
   /// Call it once per control step, before solving. While no target is set, the bound is
-  /// simply absent. Use clearTargetDisplacement() or reset() to turn it back off.
+  /// absent; clearTargetDisplacement() or reset() turn it back off.
   ///
   /// @param delta_q_target Remaining displacement to the task target (size oink.num_variables).
   /// @throws std::invalid_argument if delta_q_target size mismatches.
@@ -78,32 +78,32 @@ struct AccelerationLimit : public Constraints {
   void reset();
 
   /// @brief Get the number of constraint rows (num_variables).
-  int getNumConstraints(const Scene& scene) const override;
+  int getNumConstraints(const SceneContext& context) const override;
 
   /// @brief Compute QP constraint matrices for acceleration limits.
-  /// @param scene The scene containing robot state and model.
+  /// @param context The context supplying the configuration and the kinematics scratch.
   /// @param constraint_matrix Output constraint matrix G (num_variables × num_variables).
   /// @param lower_bounds Output lower bounds vector (num_variables).
   /// @param upper_bounds Output upper bounds vector (num_variables).
   /// @return void on success, error message on failure.
   tl::expected<void, std::string>
-  computeQpConstraints(const Scene& scene, Eigen::Ref<Eigen::MatrixXd> constraint_matrix,
+  computeQpConstraints(const SceneContext& context, Eigen::Ref<Eigen::MatrixXd> constraint_matrix,
                        Eigen::Ref<Eigen::VectorXd> lower_bounds,
                        Eigen::Ref<Eigen::VectorXd> upper_bounds) const override;
 
-  double dt;                     /// Control timestep (seconds).
-  Eigen::VectorXd a_max;         /// Maximum acceleration per group joint.
-  Eigen::VectorXd delta_q_prev;  /// Displacement applied on the previous step.
+  double dt;                     ///< Control timestep (seconds).
+  Eigen::VectorXd a_max;         ///< Maximum acceleration per group joint.
+  Eigen::VectorXd delta_q_prev;  ///< Displacement applied on the previous step.
 
   /// Remaining displacement to the task target. If not set, target braking is disabled.
   std::optional<Eigen::VectorXd> delta_q_target;
 
-  int num_variables;                    /// Number of group velocity DOFs.
-  Eigen::VectorXi v_indices;            /// Velocity indices of the joint group.
-  mutable Eigen::VectorXd q_max;        /// Pre-allocated maximum joint position limits.
-  mutable Eigen::VectorXd q_min;        /// Pre-allocated minimum joint position limits.
-  mutable Eigen::VectorXd delta_q_max;  /// Pre-allocated workspace for distance to upper limit.
-  mutable Eigen::VectorXd delta_q_min;  /// Pre-allocated workspace for distance to lower limit.
+  int num_variables;                    ///< Number of group velocity DOFs.
+  Eigen::VectorXi v_indices;            ///< Velocity indices of the joint group.
+  mutable Eigen::VectorXd q_max;        ///< Pre-allocated maximum joint position limits.
+  mutable Eigen::VectorXd q_min;        ///< Pre-allocated minimum joint position limits.
+  mutable Eigen::VectorXd delta_q_max;  ///< Pre-allocated workspace for distance to upper limit.
+  mutable Eigen::VectorXd delta_q_min;  ///< Pre-allocated workspace for distance to lower limit.
 };
 
 }  // namespace roboplan
