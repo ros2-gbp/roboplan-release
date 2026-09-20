@@ -1,3 +1,36 @@
+## roboplan (kilted) - 0.7.0-1
+
+The packages in the `roboplan` repository were released into the `kilted` distro by running `/usr/bin/bloom-release --rosdistro kilted roboplan` on `Sun, 20 Sep 2026 00:46:41 -0000`
+
+These packages were released:
+- `roboplan`
+- `roboplan_cartesian_planning`
+- `roboplan_common`
+- `roboplan_core`
+- `roboplan_example_models`
+- `roboplan_examples`
+- `roboplan_oink`
+- `roboplan_rrt`
+- `roboplan_simple_ik`
+- `roboplan_toppra`
+
+Version of package(s) in repository `roboplan`:
+
+- upstream repository: https://github.com/open-planning/roboplan.git
+- release repository: https://github.com/ros2-gbp/roboplan-release.git
+- rosdistro version: `0.6.1-1`
+- old version: `0.6.1-1`
+- new version: `0.7.0-1`
+
+Versions of tools used:
+
+- bloom version: `0.14.4`
+- catkin_pkg version: `1.1.1`
+- rosdep version: `0.27.0`
+- rosdistro version: `1.1.0`
+- vcstools version: `0.1.42`
+
+
 ## roboplan (jazzy) - 0.7.0-1
 
 The packages in the `roboplan` repository were released into the `jazzy` distro by running `/usr/bin/bloom-release --rosdistro jazzy roboplan` on `Sun, 20 Sep 2026 00:43:49 -0000`
