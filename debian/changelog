@@ -1,0 +1,13 @@
+ros-kilted-roboplan-common (0.7.0-1noble) noble; urgency=high
+
+  * Use pixi-build to declare Conda dependencies for each package (#301 <https://github.com/open-planning/roboplan/issues/301>)
+  * Put the Python install logic back into its original CMake location (#315 <https://github.com/open-planning/roboplan/issues/315>)
+  * Add cmake-format to pre-commit, and run it (#317 <https://github.com/open-planning/roboplan/issues/317>)
+  * Make cmeel packages independently buildable (#312 <https://github.com/open-planning/roboplan/issues/312>)
+  * Drop scikit-build in favor of direct usage of cmeel (#304 <https://github.com/open-planning/roboplan/issues/304>)
+  * Constrain scope of DLL loader manipulation (#302 <https://github.com/open-planning/roboplan/issues/302>)
+  * Contributors: Ezra Brooks
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Sat, 19 Sep 2026 04:00:00 -0000
+
+
