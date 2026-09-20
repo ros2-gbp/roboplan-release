@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 #include <roboplan/core/scene.hpp>
@@ -25,7 +26,11 @@ protected:
     const auto srdf_path = model_prefix / "ur_robot_model" / "ur5_gripper.srdf";
     const std::vector<std::filesystem::path> package_paths = {
         example_models::get_package_share_dir()};
-    scene = std::make_shared<Scene>("test_scene", urdf_path, srdf_path, package_paths);
+    const auto description = loadUrdfSceneDescription(urdf_path, package_paths);
+    scene = std::make_shared<Scene>("test_scene", description);
+    if (const auto imported = scene->importSrdf(loadTextFile(srdf_path)); !imported) {
+      throw std::runtime_error(imported.error());
+    }
   }
 
   // Builds a goal pose by running forward kinematics on a known configuration.
@@ -46,12 +51,11 @@ public:
 
 TEST_F(RoboPlanSimpleIkTest, SolveIk) {
   // Happy path: solve for a reachable target.
-  scene->setRngSeed(286);
-
   SimpleIkOptions options;
   options.group_name = kGroupName;
   options.max_time = kMaxSolveTime;
   auto ik = std::make_unique<SimpleIk>(scene, options);
+  ik->setRngSeed(286);
 
   const auto goal = reachableGoal();
   JointConfiguration start;
@@ -92,7 +96,6 @@ TEST_F(RoboPlanSimpleIkTest, InvalidTipFrame) {
 TEST_F(RoboPlanSimpleIkTest, CollisionChecking) {
   // The same reachable target succeeds when collisions are ignored, but fails
   // once an obstacle makes every candidate configuration collide.
-  scene->setRngSeed(286);
 
   const auto goal = reachableGoal();
   JointConfiguration start;
