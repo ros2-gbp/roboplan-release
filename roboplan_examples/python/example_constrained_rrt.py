@@ -3,36 +3,41 @@
 import queue
 import sys
 import time
-import tyro
-import xacro
-
 from dataclasses import replace
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pinocchio as pin
-from pinocchio.visualize import ViserVisualizer
-
+import tyro
+import xacro
 from common import ObstacleConfig, get_model_data
+from pinocchio.visualize import ViserVisualizer
 
 try:
     import coal
 except ModuleNotFoundError:
     import hppfcl as coal
 
-from roboplan.core import CartesianConfiguration, JointConfiguration, Scene
+import itertools
+
+from roboplan.core import (
+    CartesianConfiguration,
+    JointConfiguration,
+    Scene,
+    loadJointLimitsConfig,
+    loadUrdfSceneDescriptionFromXml,
+)
 from roboplan.example_models import get_package_share_dir
 from roboplan.rrt import (
+    RRT,
     ConstraintProjector,
     ConstraintProjectorOptions,
     PoseConstraint,
-    RRT,
     RRTOptions,
 )
 from roboplan.simple_ik import SimpleIk, SimpleIkOptions
 from roboplan.toppra import PathParameterizerTOPPRA, SplineFittingMode, TOPPRAOptions
 from roboplan.visualization import addPositionPolyline, visualizeJointTrajectory
-
 
 # The safe zone the gripper must stay inside, as (min, max) world coordinates in meters.
 ZONE_MIN = np.array([0.30, -0.45, 0.25])
@@ -133,7 +138,7 @@ def measure_path(scene, path, nominal_z, group_name, ee_name, samples=8):
     # Plot against arc length rather than sample index, so the two paths in a comparison are drawn
     # on the same footing even when one of them has many more waypoints.
     arc = np.cumsum(
-        [0.0] + [scene.configurationDistance(*p) for p in zip(dense, dense[1:])]
+        [0.0] + [scene.configurationDistance(*p) for p in itertools.pairwise(dense)]
     )
 
     # Tilt is the angle between the gripper's approach axis and its nominal direction, which is
@@ -215,14 +220,14 @@ def main(
     """
     Plans RRT paths that keep the gripper upright and inside a safe zone.
 
-    Each plan draws a random goal inside a box-shaped safe zone and plans to it without ever tipping
-    the gripper over or leaving the box, then plans the same problem unconstrained to show what the
-    constraint buys. Both requirements are one `PoseConstraint`: bounds on the end effector's position,
-    plus bounds on roll and pitch relative to a straight-down nominal orientation. Yaw is left free.
+    Each plan draws a random goal inside a box-shaped safe zone and plans to it without tipping the
+    gripper or leaving the box, then plans the same problem unconstrained for comparison. Both
+    requirements are one `PoseConstraint`: bounds on the end effector's position, plus bounds on
+    roll and pitch relative to a straight-down nominal orientation. Yaw is left free.
 
-    Note that bounding roll and pitch to +/- theta admits a total tilt of up to acos(cos^2(theta)),
-    because the two rotations compose, so the default 5 degree box allows the gripper to lean at
-    most 7.07 degrees off vertical.
+    Bounding roll and pitch to +/- theta admits a total tilt of up to acos(cos^2(theta)) because
+    the two rotations compose, so the default 5 degree box allows at most 7.07 degrees off
+    vertical.
 
     Parameters:
         model: The name of the model to use.
@@ -251,13 +256,14 @@ def main(
     package_paths = [get_package_share_dir()]
     scene = Scene(
         "constrained_rrt_scene",
-        urdf=urdf_xml,
-        srdf=srdf_xml,
-        package_paths=package_paths,
-        yaml_config_path=model_data.yaml_config_path,
+        loadUrdfSceneDescriptionFromXml(urdf_xml, package_paths),
     )
+    scene.importJointLimitsFromConfig(
+        loadJointLimitsConfig(model_data.yaml_config_path)
+    )
+    scene.importSrdf(srdf_xml)
 
-    # Create a redundant Pinocchio model just for visualization with mimic joints.
+    # Separate Pinocchio model (with mimic joints) for visualization.
     pin_model = pin.buildModelFromXML(urdf_xml, mimic=True)
     collision_model = pin.buildGeomFromUrdfString(
         pin_model, urdf_xml, pin.GeometryType.COLLISION, package_dirs=package_paths
