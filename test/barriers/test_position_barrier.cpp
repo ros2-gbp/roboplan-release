@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 
 #include <roboplan/core/scene.hpp>
 #include <roboplan_example_models/resources.hpp>
@@ -8,6 +9,7 @@
 #include <roboplan_oink/constraints/velocity_limit.hpp>
 #include <roboplan_oink/optimal_ik.hpp>
 #include <roboplan_oink/tasks/frame.hpp>
+#include <test_utils.hpp>
 
 namespace {
 constexpr double kTolerance = 1e-3;
@@ -35,8 +37,12 @@ protected:
     srdf_path_ = model_prefix / "ur_robot_model" / "ur5_gripper.srdf";
     package_paths_ = {example_models::get_package_share_dir()};
     yaml_config_path_ = model_prefix / "ur_robot_model" / "ur5_config.yaml";
-    scene_ = std::make_shared<Scene>("test_scene", urdf_path_, srdf_path_, package_paths_,
-                                     yaml_config_path_);
+    const auto description = loadUrdfSceneDescription(urdf_path_, package_paths_);
+    scene_ = std::make_shared<Scene>("test_scene", description);
+    scene_->importJointLimitsFromConfig(loadJointLimitsConfig(yaml_config_path_));
+    if (const auto imported = scene_->importSrdf(loadTextFile(srdf_path_)); !imported) {
+      throw std::runtime_error(imported.error());
+    }
     oink_ = std::make_shared<Oink>(*scene_);
 
     num_variables_ = scene_->getModel().nv;
@@ -61,7 +67,7 @@ TEST_F(PositionBarrierTest, ConstructionFullBox) {
   auto barrier = std::make_shared<PositionBarrier>(*oink_, *scene_, "tool0", p_min, p_max, dt_);
 
   // Full box creates 6 constraints (2 per axis: lower and upper bound)
-  EXPECT_EQ(barrier->getNumBarriers(*scene_), 6);
+  EXPECT_EQ(barrier->getNumBarriers(posed(*oink_, *scene_)), 6);
   EXPECT_DOUBLE_EQ(barrier->gain, 1.0);
   EXPECT_DOUBLE_EQ(barrier->dt, dt_);
 }
@@ -84,7 +90,7 @@ TEST_F(PositionBarrierTest, SelectiveAxisConstraint) {
       std::make_shared<PositionBarrier>(*oink_, *scene_, "tool0", p_min, p_max, dt_, axes);
 
   // Only 1 constraint (lower bound on z; upper bound is +inf so not counted)
-  EXPECT_EQ(barrier->getNumBarriers(*scene_), 1);
+  EXPECT_EQ(barrier->getNumBarriers(posed(*oink_, *scene_)), 1);
 }
 
 // Test barrier value computation
@@ -103,7 +109,7 @@ TEST_F(PositionBarrierTest, BarrierValueComputation) {
 
   auto barrier = std::make_shared<PositionBarrier>(*oink_, *scene_, "tool0", p_min, p_max, dt_);
 
-  auto result = barrier->computeBarrier(*scene_);
+  auto result = barrier->computeBarrier(posed(*oink_, *scene_));
   ASSERT_TRUE(result.has_value()) << "computeBarrier failed: " << result.error();
 
   // All barrier values should be positive (safe)
@@ -133,7 +139,7 @@ TEST_F(PositionBarrierTest, BarrierLimitsMotion) {
                                                    roboplan::ConstraintAxisSelection(), 50.0);
 
   // Verify we start inside the safe region
-  auto compute_result = barrier->computeBarrier(*scene_);
+  auto compute_result = barrier->computeBarrier(posed(*oink_, *scene_));
   ASSERT_TRUE(compute_result.has_value());
   ASSERT_TRUE((barrier->barrier_values.array() >= 0.0).all()) << "Must start inside safe region";
 
@@ -363,11 +369,11 @@ TEST_F(PositionBarrierTest, QpInequalityComputation) {
   auto barrier = std::make_shared<PositionBarrier>(*oink_, *scene_, "tool0", p_min, p_max, dt_,
                                                    roboplan::ConstraintAxisSelection(), 5.0);
 
-  int num_barriers = barrier->getNumBarriers(*scene_);
+  int num_barriers = barrier->getNumBarriers(posed(*oink_, *scene_));
   Eigen::MatrixXd G(num_barriers, num_variables_);
   Eigen::VectorXd h(num_barriers);
 
-  auto result = barrier->computeQpInequalities(*scene_, G, h);
+  auto result = barrier->computeQpInequalities(posed(*oink_, *scene_), G, h);
   ASSERT_TRUE(result.has_value()) << "computeQpInequalities failed: " << result.error();
 
   // Verify dimensions
@@ -417,11 +423,11 @@ TEST_F(PositionBarrierTest, SaturatingClassKFunction) {
   auto barrier = std::make_shared<PositionBarrier>(*oink_, *scene_, "tool0", p_min, p_max, dt_,
                                                    roboplan::ConstraintAxisSelection(), 5.0);
 
-  int num_barriers = barrier->getNumBarriers(*scene_);
+  int num_barriers = barrier->getNumBarriers(posed(*oink_, *scene_));
   Eigen::MatrixXd G(num_barriers, num_variables_);
   Eigen::VectorXd b(num_barriers);
 
-  auto result = barrier->computeQpInequalities(*scene_, G, b);
+  auto result = barrier->computeQpInequalities(posed(*oink_, *scene_), G, b);
   ASSERT_TRUE(result.has_value()) << "computeQpInequalities failed: " << result.error();
 
   // Verify b is positive when safe (h > 0)
@@ -429,7 +435,7 @@ TEST_F(PositionBarrierTest, SaturatingClassKFunction) {
   EXPECT_TRUE((b.array() > 0.0).all()) << "b values should be positive when safe";
 
   // Verify saturating formula: b = gain * h / (1 + |h|)
-  auto barrier_result = barrier->computeBarrier(*scene_);
+  auto barrier_result = barrier->computeBarrier(posed(*oink_, *scene_));
   ASSERT_TRUE(barrier_result.has_value());
 
   for (int i = 0; i < num_barriers; ++i) {
@@ -463,7 +469,7 @@ TEST_F(PositionBarrierTest, SafeDisplacementRegularization) {
   Eigen::MatrixXd H(num_variables_, num_variables_);
   Eigen::VectorXd c(num_variables_);
 
-  auto result = barrier->computeQpObjective(*scene_, H, c);
+  auto result = barrier->computeQpObjective(posed(*oink_, *scene_), H, c);
   ASSERT_TRUE(result.has_value()) << "computeQpObjective failed: " << result.error();
 
   // H should be diagonal (identity scaled by weight)
@@ -584,14 +590,16 @@ TEST_F(PositionBarrierTest, SafetyMarginTightensConstraint) {
       std::make_shared<PositionBarrier>(*oink_, *scene_, "tool0", p_min, p_max, dt_,
                                         roboplan::ConstraintAxisSelection(), 5.0, 1.0, 0.1);
 
-  int num_barriers = barrier_no_margin->getNumBarriers(*scene_);
+  int num_barriers = barrier_no_margin->getNumBarriers(posed(*oink_, *scene_));
   Eigen::MatrixXd G_no_margin(num_barriers, num_variables_);
   Eigen::VectorXd b_no(num_barriers);
   Eigen::MatrixXd G_with_margin(num_barriers, num_variables_);
   Eigen::VectorXd b_with(num_barriers);
 
-  auto result_no = barrier_no_margin->computeQpInequalities(*scene_, G_no_margin, b_no);
-  auto result_with = barrier_with_margin->computeQpInequalities(*scene_, G_with_margin, b_with);
+  auto result_no =
+      barrier_no_margin->computeQpInequalities(posed(*oink_, *scene_), G_no_margin, b_no);
+  auto result_with =
+      barrier_with_margin->computeQpInequalities(posed(*oink_, *scene_), G_with_margin, b_with);
   ASSERT_TRUE(result_no.has_value());
   ASSERT_TRUE(result_with.has_value());
 
@@ -652,7 +660,7 @@ TEST_F(PositionBarrierTest, EnforceBarriersPreventsViolation) {
       *oink_, *scene_, "tool0", p_min, p_max, dt_, roboplan::ConstraintAxisSelection(),
       /*gain=*/5.0, /*safe_displacement_gain=*/1.0, /*safety_margin=*/0.01);
 
-  auto compute_result = barrier->computeBarrier(*scene_);
+  auto compute_result = barrier->computeBarrier(posed(*oink_, *scene_));
   ASSERT_TRUE(compute_result.has_value());
   ASSERT_TRUE((barrier->barrier_values.array() >= 0.0).all()) << "Must start inside safe region";
 
@@ -686,7 +694,7 @@ TEST_F(PositionBarrierTest, EnforceBarriersPreventsViolation) {
     scene_->setJointPositions(q_current);
     scene_->forwardKinematics(q_current, "tool0");
 
-    compute_result = barrier->computeBarrier(*scene_);
+    compute_result = barrier->computeBarrier(posed(*oink_, *scene_));
     ASSERT_TRUE(compute_result.has_value());
 
     const double min_barrier = barrier->barrier_values.minCoeff();
@@ -710,7 +718,7 @@ TEST_F(PositionBarrierTest, EnforceBarriersPreventsViolation) {
   // Final check
   scene_->setJointPositions(q_current);
   scene_->forwardKinematics(q_current, "tool0");
-  compute_result = barrier->computeBarrier(*scene_);
+  compute_result = barrier->computeBarrier(posed(*oink_, *scene_));
   ASSERT_TRUE(compute_result.has_value());
   const double final_min_barrier = barrier->barrier_values.minCoeff();
 
