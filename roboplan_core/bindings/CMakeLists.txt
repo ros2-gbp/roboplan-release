@@ -1,0 +1,199 @@
+# Python bindings for the roboplan core package.
+#
+# This file is added via `add_subdirectory(bindings)` from the parent
+# roboplan_core/CMakeLists.txt only when BUILD_PYTHON_BINDINGS is ON, so the
+# `roboplan` C++ target already exists in this configure and does not need to be
+# found via find_package.
+#
+# NOTE: The ament/cmeel/nanobind detection boilerplate below is duplicated per
+# package for now; it should be factored into a shared CMake helper installed by
+# this (core) package once the migration is complete.
+
+find_package(ament_cmake QUIET)
+if(ament_cmake_FOUND)
+  set(AMENT_BUILD TRUE)
+  message(STATUS "roboplan bindings: building with ament_cmake")
+else()
+  set(AMENT_BUILD FALSE)
+  message(
+    STATUS "roboplan bindings: building with scikit-build / vanilla CMake")
+endif()
+
+if(AMENT_BUILD)
+  find_package(Python 3.8 COMPONENTS Interpreter Development REQUIRED)
+  find_package(ament_cmake_python REQUIRED)
+else()
+  find_package(
+    Python REQUIRED
+    COMPONENTS Interpreter Development.Module
+    OPTIONAL_COMPONENTS Development.SABIModule)
+endif()
+
+# Always resolve nanobind from the active Python interpreter so we pick up the
+# environment's (pixi/wheel build-env) nanobind rather than a stray system
+# install (e.g. /usr/share/nanobind from apt, which lacks bundled headers).
+execute_process(
+  COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  OUTPUT_VARIABLE nanobind_ROOT)
+find_package(nanobind CONFIG REQUIRED)
+
+# NOTE: <roboplan_bindings/expected.hpp> lives in this package's main include
+# tree (roboplan_core/include/roboplan_bindings/) and is installed
+# unconditionally by the top-level CMakeLists, so dependent packages (e.g.
+# roboplan_rrt, roboplan_toppra) can find it via find_package(roboplan_core)
+# even when this package is built without the Python bindings. The core.hpp /
+# filters.hpp headers under bindings/include are private.
+
+nanobind_add_module(_core_ext STABLE_ABI NB_STATIC src/core_ext.cpp
+                    src/core.cpp)
+target_include_directories(_core_ext
+                           PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(_core_ext
+                           PRIVATE ROBOPLAN_VERSION="${PROJECT_VERSION}")
+set_property(TARGET _core_ext PROPERTY CXX_STANDARD 20)
+target_link_libraries(_core_ext PRIVATE roboplan)
+
+# PEP 420 namespace package: no roboplan/__init__.py is shipped. Resolve the
+# Python install destination per build context:
+#
+# * colcon (ament): the dir (relative to the package's install prefix) that
+#   colcon's PYTHONPATH hook adds. Use ament_get_python_install_dir() so the
+#   layout matches on Windows (Lib/site-packages), falling back to site-packages
+#   on Debian-based ROS, where ament returns lib/python3/dist-packages -- a path
+#   the hook omits.
+# * cmeel: Python_SITELIB if pure Python or just headers, Python_SITEARCH if
+#   package contains arch-specific binaries
+# * plain CMake into a prefix (pixi/conda, the Docker images): the interpreter's
+#   site-packages (absolute), so the package is importable.
+#
+if(AMENT_BUILD)
+  ament_get_python_install_dir(_ament_python_dir)
+  if(_ament_python_dir MATCHES "dist-packages")
+    set(PYTHON_DESTINATION
+        "lib/python${Python_VERSION_MAJOR}.${Python_VERSION_MINOR}/site-packages"
+    )
+  else()
+    set(PYTHON_DESTINATION "${_ament_python_dir}")
+  endif()
+elseif(DEFINED PYTHON_SITELIB)
+  set(PYTHON_DESTINATION "${PYTHON_SITELIB}")
+else()
+  # TO_CMAKE_PATH converts Windows backslashes, which would otherwise become
+  # invalid escape sequences in the generated cmake_install.cmake.
+  file(TO_CMAKE_PATH "${Python_SITEARCH}" PYTHON_DESTINATION)
+endif()
+
+# The filters C++ code is part of the `roboplan` library.
+nanobind_add_module(_filters_ext STABLE_ABI NB_STATIC src/filters_ext.cpp
+                    src/filters.cpp)
+target_include_directories(_filters_ext
+                           PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_compile_definitions(_filters_ext
+                           PRIVATE ROBOPLAN_VERSION="${PROJECT_VERSION}")
+set_property(TARGET _filters_ext PROPERTY CXX_STANDARD 20)
+target_link_libraries(_filters_ext PRIVATE roboplan)
+
+# Let each extension find the roboplan libraries, and their dependencies,
+# relative to itself. macOS dyld searches an image's run paths for the whole
+# load chain, and SIP strips DYLD_LIBRARY_PATH from subprocesses, which would
+# otherwise break stub generation. Linux RUNPATH is per-object, so ask the
+# linker for the older RPATH tag, which glibc applies to the whole dependency
+# tree. Windows uses DLL search directories instead (roboplan_common/dll.py).
+if(APPLE)
+  set(_rpath_origin "@loader_path")
+elseif(UNIX)
+  set(_rpath_origin "$ORIGIN")
+  target_link_options(_core_ext PRIVATE "LINKER:--disable-new-dtags")
+  target_link_options(_filters_ext PRIVATE "LINKER:--disable-new-dtags")
+endif()
+if(_rpath_origin)
+  file(RELATIVE_PATH _ext_to_lib_core
+       "${CMAKE_INSTALL_PREFIX}/${PYTHON_DESTINATION}/roboplan/core"
+       "${CMAKE_INSTALL_PREFIX}/lib")
+  set_target_properties(
+    _core_ext PROPERTIES INSTALL_RPATH "${_rpath_origin}/${_ext_to_lib_core}"
+                         INSTALL_RPATH_USE_LINK_PATH TRUE)
+  file(RELATIVE_PATH _ext_to_lib_filters
+       "${CMAKE_INSTALL_PREFIX}/${PYTHON_DESTINATION}/roboplan/filters"
+       "${CMAKE_INSTALL_PREFIX}/lib")
+  set_target_properties(
+    _filters_ext
+    PROPERTIES INSTALL_RPATH "${_rpath_origin}/${_ext_to_lib_filters}"
+               INSTALL_RPATH_USE_LINK_PATH TRUE)
+endif()
+
+install(TARGETS _core_ext
+        LIBRARY DESTINATION "${PYTHON_DESTINATION}/roboplan/core")
+install(TARGETS _filters_ext
+        LIBRARY DESTINATION "${PYTHON_DESTINATION}/roboplan/filters")
+
+# Generate Python type stubs (.pyi) for the compiled extensions. They are
+# written into the source tree (python/roboplan/<sub>/) so they are versioned in
+# git and shipped by the python install below; regenerate and commit them when
+# the C++ API changes (CI checks they are up to date). Older nanobind versions
+# (from rosdep on some distros) do not provide nanobind_add_stub. Default OFF on
+# Windows: stub generation imports the extension from the build tree, where the
+# DLLs it depends on are not yet on the loader search path. The committed stubs
+# are generated on Unix.
+if(WIN32)
+  set(generate_stubs_default OFF)
+else()
+  set(generate_stubs_default ON)
+endif()
+option(GENERATE_PYTHON_STUBS "Generate .pyi stubs for the Python bindings"
+       ${generate_stubs_default})
+if(GENERATE_PYTHON_STUBS AND NOT COMMAND nanobind_add_stub)
+  message(
+    WARNING
+      "Skipping Python stub generation: the installed nanobind version does not "
+      "provide nanobind_add_stub. Upgrade nanobind to generate stubs.")
+endif()
+if(GENERATE_PYTHON_STUBS AND COMMAND nanobind_add_stub)
+  nanobind_add_stub(
+    _core_ext_stub
+    MODULE
+    _core_ext
+    OUTPUT
+    "${CMAKE_CURRENT_SOURCE_DIR}/python/roboplan/core/_core_ext.pyi"
+    MARKER_FILE
+    "${CMAKE_CURRENT_SOURCE_DIR}/python/roboplan/core/py.typed"
+    PYTHON_PATH
+    "$<TARGET_FILE_DIR:_core_ext>"
+    DEPENDS
+    _core_ext)
+  nanobind_add_stub(
+    _filters_ext_stub
+    MODULE
+    _filters_ext
+    OUTPUT
+    "${CMAKE_CURRENT_SOURCE_DIR}/python/roboplan/filters/_filters_ext.pyi"
+    MARKER_FILE
+    "${CMAKE_CURRENT_SOURCE_DIR}/python/roboplan/filters/py.typed"
+    PYTHON_PATH
+    "$<TARGET_FILE_DIR:_filters_ext>"
+    DEPENDS
+    _filters_ext)
+
+  # Stage each extension + its __init__.py under pystage/ so sibling packages in
+  # the same build tree can import roboplan.<sub> during their own stub
+  # generation.
+  set_target_properties(
+    _core_ext PROPERTIES LIBRARY_OUTPUT_DIRECTORY
+                         "${CMAKE_BINARY_DIR}/pystage/roboplan/core")
+
+  file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/python/roboplan/core/__init__.py"
+       DESTINATION "${CMAKE_BINARY_DIR}/pystage/roboplan/core")
+  set_target_properties(
+    _filters_ext PROPERTIES LIBRARY_OUTPUT_DIRECTORY
+                            "${CMAKE_BINARY_DIR}/pystage/roboplan/filters")
+  file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/python/roboplan/filters/__init__.py"
+       DESTINATION "${CMAKE_BINARY_DIR}/pystage/roboplan/filters")
+endif()
+
+# Ships the roboplan/<sub>/ packages and the generated .pyi/py.typed stubs.
+install(DIRECTORY python/roboplan/ DESTINATION "${PYTHON_DESTINATION}/roboplan")
+
+if(AMENT_BUILD AND BUILD_TESTING)
+  add_subdirectory(test)
+endif()

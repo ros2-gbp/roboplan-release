@@ -1,5 +1,6 @@
 #include <filesystem>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 #include <roboplan/core/path_utils.hpp>
@@ -18,8 +19,12 @@ int main(int /*argc*/, char* /*argv*/[]) {
   const auto srdf_path = model_prefix / "ur_robot_model" / "ur5_gripper.srdf";
   const std::vector<std::filesystem::path> package_paths = {share_prefix};
   const auto yaml_config_path = model_prefix / "ur_robot_model" / "ur5_config.yaml";
-  auto scene = std::make_shared<Scene>("example_rrt_scene", urdf_path, srdf_path, package_paths,
-                                       yaml_config_path);
+  const auto description = loadUrdfSceneDescription(urdf_path, package_paths);
+  auto scene = std::make_shared<Scene>("example_rrt_scene", description);
+  scene->importJointLimitsFromConfig(loadJointLimitsConfig(yaml_config_path));
+  if (const auto imported = scene->importSrdf(loadTextFile(srdf_path)); !imported) {
+    throw std::runtime_error(imported.error());
+  }
 
   // Set up the RRT
   RRTOptions options;
@@ -52,6 +57,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
   const auto maybe_path = rrt.plan(start, goal);
   if (!maybe_path) {
     std::cout << "Failed to plan path: " << maybe_path.error() << std::endl;
+    return 1;
   }
   auto path = maybe_path.value();
   std::cout << "Found a path:\n" << path << std::endl;

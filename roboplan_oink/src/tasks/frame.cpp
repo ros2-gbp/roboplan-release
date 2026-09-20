@@ -48,9 +48,9 @@ FrameTask::FrameTask(const Oink& oink, const Scene& scene,
   full_jacobian = Eigen::MatrixXd::Zero(kSpatialDimension, scene.getModel().nv);
 }
 
-tl::expected<void, std::string> FrameTask::computeError(const Scene& scene) {
-  // Get data from scene (assumes kinematics are already up-to-date)
-  auto& data = scene.getData();
+tl::expected<void, std::string> FrameTask::computeError(const SceneContext& context) {
+  // Assumes kinematics are already up-to-date.
+  auto& data = context.getData();
 
   // Get current frame pose in world frame
   const pinocchio::SE3& transform_world_to_frame = data.oMf.at(frame_id);
@@ -75,9 +75,8 @@ tl::expected<void, std::string> FrameTask::computeError(const Scene& scene) {
   error_container.head<3>() = e_pos;
   error_container.tail<3>() = e_rot;
 
-  // Soft saturation of position error using tanh for smooth gradients
-  // This prevents large jumps that can invalidate CBF linearization while maintaining
-  // smooth error dynamics. Uses saturate(e) = e_max * tanh(||e|| / e_max) * (e / ||e||)
+  // Soft saturation with tanh prevents large jumps that can invalidate CBF linearization while
+  // keeping the error dynamics smooth: saturate(e) = e_max * tanh(||e|| / e_max) * (e / ||e||)
   if (std::isfinite(max_position_error)) {
     Eigen::Vector3d pos_error = error_container.head<kPositionDimension>();
     const double pos_norm = pos_error.norm();
@@ -87,7 +86,6 @@ tl::expected<void, std::string> FrameTask::computeError(const Scene& scene) {
     }
   }
 
-  // Soft saturation of rotation error using tanh for smooth gradients
   if (std::isfinite(max_rotation_error)) {
     Eigen::Vector3d rot_error = error_container.tail<kOrientationDimension>();
     const double rot_norm = rot_error.norm();
@@ -100,9 +98,8 @@ tl::expected<void, std::string> FrameTask::computeError(const Scene& scene) {
   return {};
 }
 
-tl::expected<void, std::string> FrameTask::computeJacobian(const Scene& scene) {
-  // Get current joint configuration
-  const Eigen::VectorXd& q = scene.getCurrentJointPositions();
+tl::expected<void, std::string> FrameTask::computeJacobian(const SceneContext& context) {
+  const Eigen::VectorXd& q = context.getJointPositions();
 
   // Compute the full-robot frame Jacobian, then select the group's velocity columns.
   // When a base frame is set, use the relative Jacobian (expressed in LOCAL_WORLD_ALIGNED),
@@ -110,12 +107,12 @@ tl::expected<void, std::string> FrameTask::computeJacobian(const Scene& scene) {
   // standard world-rooted Jacobian.
   full_jacobian.setZero();
   if (base_frame_id.has_value()) {
-    scene.computeRelativeFrameJacobian(q, frame_id, target_pose.base_frame,
-                                       pinocchio::ReferenceFrame::LOCAL_WORLD_ALIGNED,
-                                       full_jacobian);
+    context.computeRelativeFrameJacobian(q, frame_id, target_pose.base_frame,
+                                         pinocchio::ReferenceFrame::LOCAL_WORLD_ALIGNED,
+                                         full_jacobian);
   } else {
-    scene.computeFrameJacobian(q, frame_id, pinocchio::ReferenceFrame::LOCAL_WORLD_ALIGNED,
-                               full_jacobian);
+    context.computeFrameJacobian(q, frame_id, pinocchio::ReferenceFrame::LOCAL_WORLD_ALIGNED,
+                                 full_jacobian);
   }
 
   // The negative sign ensures that with the QP formulation (min ||J*dq + gain*e||^2),

@@ -1,30 +1,32 @@
 #!/usr/bin/env python3
 
-import sys
 import queue
+import sys
 import time
-import tyro
-import xacro
 
 import matplotlib.pyplot as plt
 import pinocchio as pin
+import tyro
+import xacro
+from common import get_model_data, get_octree
 from pinocchio.visualize import ViserVisualizer
 
-from common import get_model_data, get_octree
 from roboplan.core import (
     JointConfiguration,
     PathShortcutter,
     PathShortcuttingOptions,
     Scene,
+    loadJointLimitsConfig,
+    loadUrdfSceneDescriptionFromXml,
 )
 from roboplan.example_models import get_package_share_dir
-from roboplan.rrt import RRTOptions, RRT, visualizeTree
+from roboplan.rrt import RRT, RRTOptions, visualizeTree
 from roboplan.toppra import PathParameterizerTOPPRA, SplineFittingMode, TOPPRAOptions
 from roboplan.visualization import (
-    visualizeJointTrajectory,
-    visualizePath,
     plotJointTrajectory,
+    visualizeJointTrajectory,
     visualizeOcTree,
+    visualizePath,
 )
 
 
@@ -50,7 +52,7 @@ def main(
     include_octrees: bool = False,
 ):
     """
-    Run the RRT example with the provided parameters.
+    Plan RRT paths between random collision-free configurations and animate the trajectory.
 
     Parameters:
         model: The name of the model to use.
@@ -62,17 +64,24 @@ def main(
         max_nodes: The maximum number of nodes to add to the search tree.
         max_planning_time: The maximum time (in seconds) to search for a path.
         rrt_connect: Whether or not to use RRT-Connect.
-        rrt_star: Whether or not to use RRT*, which keeps optimizing until the node or time budget is exhausted and returns the lowest-cost path. Can be combined with `rrt_connect`.
-        rewire_distance: The configuration-space radius used to find neighbors for RRT* rewiring (only used when `rrt_star` is true). Should generally be at least `max_connection_distance`.
-        fast_return: If true, return on the first path found; if false, plan until the node or time budget is exhausted and return the lowest-cost path. Set to false to get RRT*'s asymptotically optimal behavior.
+        rrt_star: Whether or not to use RRT*, which rewires the trees. Can be combined with
+            `rrt_connect`.
+        rewire_distance: The configuration-space radius used to find neighbors for RRT* rewiring
+            (only used when `rrt_star` is true). Should generally be at least
+            `max_connection_distance`.
+        fast_return: If true, return the first path found; if false, plan until the node or time
+            budget is exhausted and return the lowest-cost path. Set to false for RRT*'s
+            asymptotically optimal behavior.
         include_shortcutting: Whether or not to include path shortcutting for found paths.
         max_shortcutting_iters: The maximum number of path shortcutting iterations.
-        toppra_mode: The trajectory generation mode for TOPP-RA. Can be `Hermite`, `Cubic`, or `Adaptive` (default).
+        toppra_mode: The spline fitting mode for TOPP-RA trajectory generation.
         host: The host for the ViserVisualizer.
         port: The port for the ViserVisualizer.
-        rng_seed: The seed for selecting random start and end poses and solving RRT.
-        include_obstacles: Whether or not to include additional obstacles in the scene. Don't use with `include_octrees` argument
-        include_octrees: Whether or not to include additional octrees in the scene. Don't use with `include_obstacles` argument
+        rng_seed: The seed for the RRT planner's random number generator.
+        include_obstacles: Whether or not to include additional obstacles in the scene.
+            Don't use with `include_octrees`.
+        include_octrees: Whether or not to include additional octrees in the scene.
+            Don't use with `include_obstacles`.
     """
     model_data = get_model_data().get(model)
     if model_data is None:
@@ -85,19 +94,19 @@ def main(
     urdf_xml = xacro.process_file(model_data.urdf_path).toxml()
     srdf_xml = xacro.process_file(model_data.srdf_path).toxml()
 
-    # Specify argument names to distinguish overloaded Scene constructors from python.
     scene = Scene(
         "test_scene",
-        urdf=urdf_xml,
-        srdf=srdf_xml,
-        package_paths=package_paths,
-        yaml_config_path=model_data.yaml_config_path,
+        loadUrdfSceneDescriptionFromXml(urdf_xml, package_paths),
     )
+    scene.importJointLimitsFromConfig(
+        loadJointLimitsConfig(model_data.yaml_config_path)
+    )
+    scene.importSrdf(srdf_xml)
     group_info = scene.getJointGroupInfo(model_data.default_joint_group)
     q_indices = group_info.q_indices
 
-    # Create a redundant Pinocchio model just for visualization with mimic joints.
-    # When Pinocchio 4.x releases nanobind bindings, we should be able to directly grab the model from the scene instead.
+    # Build a separate Pinocchio model (with mimic joints) for visualization. Until Pinocchio
+    # and Coal have nanobind bindings, it cannot be taken from the scene.
     model = pin.buildModelFromXML(urdf_xml, mimic=True)
     collision_model = pin.buildGeomFromUrdfString(
         model, urdf_xml, pin.GeometryType.COLLISION, package_dirs=package_paths
@@ -106,9 +115,7 @@ def main(
         model, urdf_xml, pin.GeometryType.VISUAL, package_dirs=package_paths
     )
 
-    # Optionally add obstacles.
-    # Again, until Pinocchio 4.x releases nanobind bindings, we need to add the obstacles separately
-    # to the scene and to the Pinocchio models used for visualization.
+    # Obstacles are added to the scene and the visualization models separately (see above).
     if include_obstacles:
         for obstacle in model_data.obstacles:
             obstacle.addToScene(scene)
@@ -163,7 +170,6 @@ def main(
     viz.display(q_full)
     time.sleep(0.1)
 
-    # Create a path planning button.
     plan_button = viz.viewer.gui.add_button("Plan path")
 
     @plan_button.on_click
@@ -190,7 +196,7 @@ def main(
             animate_button.disabled = False
         print(f"Found a path in {time.time() - t_start:.3f} s")
 
-        # Optionally include path shortening
+        # Optionally include path shortcutting
         if include_shortcutting:
             print("Shortcutting path...")
             t_start = time.time()
@@ -252,7 +258,6 @@ def main(
         plan_button.disabled = False
         animate_button.disabled = False
 
-    # Create a trajectory animation button.
     animate_button = viz.viewer.gui.add_button("Animate trajectory")
     animate_button.disabled = True
 
