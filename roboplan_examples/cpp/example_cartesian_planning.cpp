@@ -1,5 +1,6 @@
 #include <filesystem>
 #include <iostream>
+#include <stdexcept>
 #include <vector>
 
 #include <Eigen/Dense>
@@ -19,8 +20,11 @@ int main(int /*argc*/, char* /*argv*/[]) {
   const auto srdf_path = model_prefix / "ur_robot_model" / "ur5_gripper.srdf";
   const std::vector<std::filesystem::path> package_paths = {share_prefix};
 
-  auto scene =
-      std::make_shared<Scene>("example_cartesian_scene", urdf_path, srdf_path, package_paths);
+  const auto description = loadUrdfSceneDescription(urdf_path, package_paths);
+  auto scene = std::make_shared<Scene>("example_cartesian_scene", description);
+  if (const auto imported = scene->importSrdf(loadTextFile(srdf_path)); !imported) {
+    throw std::runtime_error(imported.error());
+  }
 
   // Use the current configuration as the IK seed (also the path's start pose).
   JointConfiguration q_start;
