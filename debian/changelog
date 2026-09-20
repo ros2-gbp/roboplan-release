@@ -1,0 +1,14 @@
+ros-rolling-roboplan (0.7.0-1trixie) trixie; urgency=high
+
+  * Fix metapackage builds with colcon symlink install (#334 <https://github.com/open-planning/roboplan/issues/334>)
+  * Use pixi-build to declare Conda dependencies for each package (#301 <https://github.com/open-planning/roboplan/issues/301>)
+  * Make cmeel packages independently buildable (#312 <https://github.com/open-planning/roboplan/issues/312>)
+  * Drop scikit-build in favor of direct usage of cmeel (#304 <https://github.com/open-planning/roboplan/issues/304>)
+  * Constrain scope of DLL loader manipulation (#302 <https://github.com/open-planning/roboplan/issues/302>)
+  * Create CMake superbuild to consolidate build config (#295 <https://github.com/open-planning/roboplan/issues/295>)
+  * The former roboplan package was renamed to roboplan_core; this is a new metapackage.
+  * Contributors: Ezra Brooks, Sebastian Castro
+
+ -- "Sebastian Castro" <sebas.a.castro@gmail.com>  Sat, 19 Sep 2026 04:00:00 -0000
+
+
