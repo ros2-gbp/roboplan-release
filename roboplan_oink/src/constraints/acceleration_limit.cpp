@@ -69,12 +69,13 @@ void AccelerationLimit::reset() {
   delta_q_target.reset();
 }
 
-int AccelerationLimit::getNumConstraints(const Scene& /*scene*/) const { return num_variables; }
+int AccelerationLimit::getNumConstraints(const SceneContext& /*context*/) const {
+  return num_variables;
+}
 
 tl::expected<void, std::string> AccelerationLimit::computeQpConstraints(
-    const Scene& scene, Eigen::Ref<Eigen::MatrixXd> constraint_matrix,
+    const SceneContext& context, Eigen::Ref<Eigen::MatrixXd> constraint_matrix,
     Eigen::Ref<Eigen::VectorXd> lower_bounds, Eigen::Ref<Eigen::VectorXd> upper_bounds) const {
-  // Validate pre-allocated workspace dimensions.
   if (constraint_matrix.rows() != num_variables || constraint_matrix.cols() != num_variables) {
     return tl::make_unexpected("AccelerationLimit: constraint_matrix size mismatch. Expected (" +
                                std::to_string(num_variables) + " x " +
@@ -93,8 +94,8 @@ tl::expected<void, std::string> AccelerationLimit::computeQpConstraints(
                                std::to_string(upper_bounds.size()));
   }
 
-  const auto& q = scene.getCurrentJointPositions();
-  auto maybe_q_collapsed = collapseContinuousJointPositions(scene, "", q);
+  const auto& q = context.getJointPositions();
+  auto maybe_q_collapsed = collapseContinuousJointPositions(context.getScene(), "", q);
   if (!maybe_q_collapsed) {
     return tl::make_unexpected("AccelerationLimit: " + maybe_q_collapsed.error());
   }
@@ -102,7 +103,8 @@ tl::expected<void, std::string> AccelerationLimit::computeQpConstraints(
 
   // Fetch joint position limits once (used for the braking-distance term).
   if (q_min.size() == 0u) {
-    const auto maybe_position_limits = scene.getPositionLimitVectors("", /*collapsed*/ true);
+    const auto maybe_position_limits =
+        context.getScene().getPositionLimitVectors("", /*collapsed*/ true);
     if (!maybe_position_limits) {
       return tl::make_unexpected("AccelerationLimit: " + maybe_position_limits.error());
     }
@@ -122,7 +124,6 @@ tl::expected<void, std::string> AccelerationLimit::computeQpConstraints(
 
   // Box constraints l <= G*dq <= u with G = identity.
   constraint_matrix.setIdentity();
-
   const double dt_sq = dt * dt;
   for (int i = 0; i < num_variables; ++i) {
     // A joint that cannot accelerate cannot move. Pin it instead of emitting a box that the
