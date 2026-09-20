@@ -70,6 +70,10 @@ public:
   bool solveIk(const std::vector<CartesianConfiguration>& goals, const JointConfiguration& start,
                JointConfiguration& solution);
 
+  /// @brief Sets the seed used to draw restart configurations.
+  /// @param seed The seed to set.
+  void setRngSeed(unsigned int seed);
+
 private:
   /// @brief Re-solves the current step so joints that would cross their position limits land
   /// exactly on their bound while the remaining joints take up the task.
@@ -90,8 +94,8 @@ private:
   /// @brief The struct containing IK solver options.
   SimpleIkOptions options_;
 
-  /// @brief Pinocchio data for the IK solver.
-  pinocchio::Data data_;
+  /// @brief Random number generator used to seed each solve's SceneContext.
+  std::mt19937 rng_gen_;
 
   /// @brief The joint group info for the IK solver.
   JointGroupInfo joint_group_info_;
