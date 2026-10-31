@@ -112,6 +112,15 @@ def test_scene_properties(test_scene: Scene) -> None:
     print(test_scene)  # Test printing for good measure
 
 
+def test_joint_velocity_indices(test_scene: Scene) -> None:
+    joint_name = test_scene.getJointNames()[0]
+    indices = test_scene.getJointVelocityIndices([joint_name])
+    assert indices.dtype == np.int32
+    assert len(indices) == 1
+    with pytest.raises(ValueError):
+        test_scene.getJointVelocityIndices(["no_such_joint"])
+
+
 def test_random_positions(test_scene: Scene) -> None:
     # Test subsequent pseudorandom values.
     orig_random_positions = test_scene.randomPositions()
@@ -124,6 +133,17 @@ def test_random_positions(test_scene: Scene) -> None:
     test_scene.setRngSeed(1234)  # reset seed
     new_seeded_positions = test_scene.randomPositions()
     assert np.all(np.equal(orig_seeded_positions, new_seeded_positions))
+
+
+def test_random_collision_free_positions_for_joint_subset(test_scene: Scene) -> None:
+    # Only the requested joints are sampled; every other entry comes from the reference.
+    joint_names = ["wrist_1_joint", "wrist_2_joint", "wrist_3_joint"]
+    q_reference = np.array([0.5, -1.0, 1.0, 0.0, 0.0, 0.0])
+    q = test_scene.randomCollisionFreePositions(joint_names, q_reference)
+    assert q is not None
+    np.testing.assert_array_equal(q[:3], q_reference[:3])
+    assert not np.array_equal(q[3:], q_reference[3:])
+    assert not test_scene.hasCollisions(q)
 
 
 def test_collision_check(test_scene: Scene) -> None:
@@ -280,6 +300,75 @@ def test_set_collisions(test_scene: Scene) -> None:
         "Frame name 'nonexistent_link' not found in frame_map_."
     )
     assert str(exc_info.value) == expected_error
+
+
+def test_attach_detach_object(test_scene: Scene) -> None:
+    q_grasp = np.array([0.0, -1.57, 0.0, 0.0, 0.0, 0.0])
+    q_place = np.array([1.0, -1.57, 1.57, 0.0, 0.0, 0.0])
+
+    # Place a box between the gripper fingers, so it collides with them.
+    tool0_T_box = np.eye(4)
+    tool0_T_box[2, 3] = 0.035
+    world_T_box = test_scene.forwardKinematics(q_grasp, "tool0") @ tool0_T_box
+    test_scene.addBoxGeometry(
+        "test_box",
+        "universe",
+        Box(0.065, 0.02, 0.04),
+        world_T_box,
+        np.array([0.5, 0.5, 0.5, 0.5]),
+    )
+    assert test_scene.hasCollisions(q_grasp)
+
+    # Once attached, the box moves with the gripper without colliding with it.
+    test_scene.setJointPositions(q_grasp)
+    test_scene.attachObject("test_box", "tool0", ["wrist_3_link"])
+    assert test_scene.isObjectAttached("test_box")
+    assert not test_scene.hasCollisions(q_grasp)
+    assert not test_scene.hasCollisions(q_place)
+
+    # Once detached, the box stays where it was released.
+    test_scene.setJointPositions(q_place)
+    test_scene.detachObject("test_box")
+    assert not test_scene.isObjectAttached("test_box")
+    assert test_scene.hasCollisions(q_place)
+    assert not test_scene.hasCollisions(q_grasp)
+
+
+def test_attach_detach_errors(test_scene: Scene) -> None:
+    test_scene.addBoxGeometry(
+        "test_box",
+        "universe",
+        Box(0.05, 0.05, 0.05),
+        np.eye(4),
+        np.array([0.5, 0.5, 0.5, 0.5]),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        test_scene.detachObject("test_box")
+    assert str(exc_info.value) == "Object 'test_box' is not attached. Cannot detach."
+
+    with pytest.raises(RuntimeError) as exc_info:
+        test_scene.reparentAttachedObject("test_box", "tool0")
+    assert str(exc_info.value) == "Object 'test_box' is not attached. Cannot reparent."
+
+    test_scene.attachObject("test_box", "tool0")
+    with pytest.raises(RuntimeError) as exc_info:
+        test_scene.attachObject("test_box", "wrist_3_link")
+    expected_error = (
+        "Object 'test_box' is already attached. Use reparentAttachedObject to move it."
+    )
+    assert str(exc_info.value) == expected_error
+
+    with pytest.raises(RuntimeError) as exc_info:
+        test_scene.removeGeometry("test_box")
+    expected_error = "Object 'test_box' is attached. Call detachObject first."
+    assert str(exc_info.value) == expected_error
+
+    # Handing the object over to another frame keeps it attached.
+    test_scene.reparentAttachedObject("test_box", "wrist_1_link", tform=np.eye(4))
+    assert test_scene.isObjectAttached("test_box")
+    test_scene.detachObject("test_box")
+    test_scene.removeGeometry("test_box")
 
 
 def test_allow_adjacent_link_collisions() -> None:
