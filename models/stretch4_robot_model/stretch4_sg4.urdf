@@ -593,7 +593,7 @@
     <parent link="wrist_yaw_link"/>
     <child link="wrist_pitch_link"/>
     <axis xyz="0 1 0"/>
-    <limit effort="0" lower="-4.276" upper="1.135" velocity="1.0"/>
+    <limit effort="0" lower="-1.135" upper="4.276" velocity="1.0"/>
   </joint>
   <link name="wrist_roll_link">
     <inertial>
