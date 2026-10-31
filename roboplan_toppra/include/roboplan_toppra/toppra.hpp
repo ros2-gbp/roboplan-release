@@ -74,6 +74,8 @@ public:
   PathParameterizerTOPPRA(const std::shared_ptr<Scene> scene, const std::string& group_name = "");
 
   /// @brief Time-parameterizes a joint-space path using TOPP-RA.
+  /// @details Planar joint velocities and accelerations are limited and reported in the joint's
+  /// body frame.
   /// @param path The path to time parameterize.
   /// @param options Options controlling the time parameterization. Refer to TOPPRAOptions.
   /// @return The trajectory if successful, else a string describing the error.
@@ -132,11 +134,11 @@ private:
   /// @details This is used to figure out which joints need to be wrapped.
   std::vector<size_t> continuous_q_indices_;
 
-  /// @brief Whether the joint group contains any planar joints.
-  /// @details When true, edges between path waypoints are densely resampled using the scene's
+  /// @brief The collapsed position index of each planar joint's x coordinate.
+  /// @details If any, edges between path waypoints are densely resampled using the scene's
   /// SE(2)-aware interpolation so the spline knots track the actual Lie-group motion of the
-  /// planar joint(s).
-  bool has_planar_joints_{false};
+  /// planar joint(s), and their velocities are limited and reported in their body frames.
+  std::vector<size_t> planar_q_indices_;
 };
 
 }  // namespace roboplan
