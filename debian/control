@@ -1,0 +1,12 @@
+Source: ros-jazzy-roboplan
+Section: misc
+Priority: optional
+Maintainer: "Sebastian Castro" <sebas.a.castro@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), ros-jazzy-ament-cmake, ros-jazzy-ros-workspace
+Homepage: https://roboplan.readthedocs.io
+Standards-Version: 3.9.2
+
+Package: ros-jazzy-roboplan
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-jazzy-roboplan-cartesian-planning, ros-jazzy-roboplan-common, ros-jazzy-roboplan-core, ros-jazzy-roboplan-example-models, ros-jazzy-roboplan-examples, ros-jazzy-roboplan-oink, ros-jazzy-roboplan-rrt, ros-jazzy-roboplan-simple-ik, ros-jazzy-roboplan-toppra, ros-jazzy-ros-workspace
+Description: Metapackage for the RoboPlan motion-planning library.
