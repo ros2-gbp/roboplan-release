@@ -20,9 +20,10 @@ struct FrameTask;
 
 /// @brief Selects how the planner assigns speed/timing along the Cartesian path.
 enum class CartesianSpeedMode {
-  /// @brief Trace the path under bounded Cartesian velocity and acceleration.
-  /// @details Resolves and times the path exactly as TimeOptimal does, then slows the whole motion
-  /// uniformly until the tool speed and acceleration are within the commanded Cartesian maxima.
+  /// @brief Trace the path at bounded Cartesian velocity and acceleration.
+  /// @details Along each smooth run of the path the tool speeds up, holds a constant speed, and
+  /// slows down, stopping at sharp corners. It also slows down, at the same bounded acceleration,
+  /// wherever the joint limits require it.
   Bounded,
 
   /// @brief Time-optimal re-timing respecting joint velocity/acceleration limits.
@@ -54,20 +55,18 @@ struct CartesianPlannerOptions {
   double max_angular_speed = 0.5;
 
   /// @brief Maximum linear tool acceleration along the path, in meters/second^2.
-  /// @details Only used in Bounded speed mode, which slows the whole motion until the peak tool
-  /// linear acceleration is within this bound.
+  /// @details Only used in Bounded speed mode.
   double max_linear_acceleration = 0.5;
 
   /// @brief Maximum angular tool acceleration along the path, in radians/second^2.
-  /// @details Only used in Bounded speed mode, which slows the whole motion until the peak tool
-  /// angular acceleration is within this bound.
+  /// @details Only used in Bounded speed mode.
   double max_angular_acceleration = 2.5;
 
   /// @brief Maximum allowed position deviation from the path, in meters.
-  double max_position_error = 0.005;
+  double position_tolerance = 0.005;
 
   /// @brief Maximum allowed orientation deviation from the path, in radians.
-  double max_orientation_error = 0.01;
+  double orientation_tolerance = 0.01;
 
   /// @brief Oink FrameTask position cost weight.
   double position_cost = 1.0;
@@ -102,12 +101,19 @@ struct CartesianPlannerOptions {
   /// Larger values round corners more aggressively, which means smoother motion with fewer stops,
   /// but the joint path strays further from the resolved waypoints. The tolerance is a joint-space
   /// bound, so the tool deviation it produces varies with the arm and is not checked against
-  /// max_position_error. A value <= 0 disables blending, so the trajectory stops at every waypoint.
+  /// position_tolerance. A value <= 0 disables blending, so the trajectory stops at every waypoint.
+  /// Only used in TimeOptimal speed mode.
   double toppra_blend_deviation = 0.0025;
 
   /// @brief Gain (0, 1] for the position-limit constraint that steers each step away
   /// from the joint position limits.
   double position_limit_gain = 1.0;
+
+  /// @brief Turn angle at a waypoint, in radians, above which Bounded mode stops there.
+  /// @details A relative change in speed of the same size also counts. Below it, the tool flows
+  /// through the waypoint, so a finely sampled curve should turn by less than this per waypoint.
+  /// Only used in Bounded speed mode.
+  double corner_tolerance = 0.175;
 
   /// @brief Validates the mode-independent option values (dt, tolerances, scales).
   /// @details Mode-specific options (e.g. the Bounded mode's commanded speeds/accelerations) are
@@ -167,7 +173,7 @@ public:
   /// @details The planner traces the path by updating each `components.tracking_tasks` target
   /// every control step and solving with the provided solver, tasks, constraints, and barriers.
   /// Oink-related fields of `options` (costs, gains, limits, etc.) are ignored in this mode
-  /// since the caller owns the objectives; timing/tolerance fields (dt, speeds, max errors,
+  /// since the caller owns the objectives; timing/tolerance fields (dt, speeds, tolerances,
   /// speed_mode, scales) still apply.
   /// @param scene A pointer to the scene to use for planning.
   /// @param options A struct containing planner options.
@@ -192,6 +198,7 @@ public:
   /// @param trajectory The joint trajectory to evaluate (e.g., the output of plan()).
   /// @return A pair of {peak velocity ratio, peak acceleration ratio}.
   /// Values <= 1.0 mean the respective joint limits are respected.
+  /// Joints without a limit are skipped, so a ratio is 0.0 if no joint has that limit.
   std::pair<double, double> computePeakLimitRatios(const JointTrajectory& trajectory) const;
 
   /// @brief Computes the achieved Cartesian path length (meters) traced by the path's tip frames.
@@ -221,72 +228,49 @@ private:
     Eigen::Matrix4d target(double s) const { return world_T_base * eval(s); }
   };
 
-  /// @brief Peak Cartesian rates observed over a timed trajectory, across all tracked tips.
-  struct CartesianPeaks {
-    double linear_speed = 0.0;          ///< Peak tool speed (m/s).
-    double angular_speed = 0.0;         ///< Peak tool angular speed (rad/s).
-    double linear_acceleration = 0.0;   ///< Peak tool acceleration (m/s^2).
-    double angular_acceleration = 0.0;  ///< Peak tool angular acceleration (rad/s^2).
+  /// @brief The Cartesian path resolved into a dense, untimed joint path.
+  struct ResolvedPath {
+    std::vector<FrameReference> references;  ///< The per-frame references the path was resolved to.
+    std::vector<double> parameters;          ///< Path parameter of each sample, in [0, 1].
+    JointPath samples;                       ///< Full joint configuration at each sample.
+    std::vector<size_t> stops;  ///< Sample indices of the path ends and its sharp corners.
   };
 
   /// @brief Builds the parts of the OInK problem that do not depend on the path or seed, once,
   /// at construction time.
-  /// @details Populates the reused solver-input buffers (constraints_, barriers_) and the group
-  /// velocity limits. When `components` is provided this also assembles the full task list
-  /// (tracking tasks followed by extra tasks) and caches the tracking tasks (tracking_tasks_) for
-  /// per-plan() wiring, since the caller's objectives are fixed; otherwise the per-end-effector
-  /// tasks_ are (re)built per plan() because they depend on the path's frames and the seed.
+  /// @details Populates the reused solver-input buffers (extra_tasks_, constraints_, barriers_)
+  /// and the group velocity limits. When `components` is provided this also caches the tracking
+  /// tasks (tracking_tasks_) for per-plan() wiring, since the caller's objectives are fixed;
+  /// otherwise the per-end-effector tasks are (re)built per plan() because they depend on the
+  /// path's frames and the seed.
   /// @param components The caller-supplied objectives, or std::nullopt for the default setup.
   /// @throws std::runtime_error if the joint velocity limits cannot be resolved (default setup).
   void buildStaticSolverComponents(const std::optional<CartesianPlannerComponents>& components);
 
-  /// @brief Builds the per-end-effector geometric reference for every frame in the path, and wires
-  /// the tracking tasks into the reused solver task list (tasks_).
+  /// @brief Builds the per-end-effector geometric reference for every frame in the path, each
+  /// wired to its tracking task.
   /// @details In the custom-components mode the tasks are the caller's (validated to match the
   /// path's tip-frame order); otherwise one priority-1 FrameTask per end-effector plus a
   /// priority-2 nullspace ConfigurationTask are (re)built from the seed configuration.
   tl::expected<std::vector<FrameReference>, std::string>
   buildFrameReferences(const CartesianPath& path, const Eigen::VectorXd& q_start_full);
 
-  /// @brief Runs one differential-IK step that retargets every frame to its pose at path parameter
-  /// `s` from the configuration `q`. Writes the candidate configuration, the group step `delta_q`,
-  /// and the worst-case (max over frames) FK pose error. Does not commit.
-  tl::expected<void, std::string> solveStep(const std::vector<FrameReference>& references,
-                                            const Eigen::VectorXd& q, double s,
-                                            Eigen::VectorXd& q_candidate, Eigen::VectorXd& delta_q,
-                                            double& position_error, double& orientation_error);
-
-  /// @brief Iterates the differential IK at a fixed `s` until every frame is within the pose
-  /// tolerance, updating `q` in place.
-  /// @details This is what keeps the resolved path on the Cartesian path: each sample is solved to
-  /// convergence rather than tracked by a single step, so the robot never trails the reference and
-  /// no throttling or lag-recovery is needed.
-  /// The tolerance here should be far tighter than the path tolerance: see kIkConvergenceFraction.
-  /// @param position_tolerance Residual position error a sample must reach.
-  /// @param orientation_tolerance Residual orientation error a sample must reach.
-  tl::expected<void, std::string> converge(const std::vector<FrameReference>& references, double s,
-                                           double position_tolerance, double orientation_tolerance,
-                                           Eigen::VectorXd& q);
-
   /// @brief Stage one: resolves the Cartesian path into a purely geometric joint path.
-  /// @details Samples the path by arc length at a density set by the pose tolerance, solving IK to
-  /// convergence at each sample and seeding from the previous solution. The result carries no
-  /// timing at all; stage two assigns it.
-  /// @return The resolved group joint positions, or a description of where and why IK failed.
-  tl::expected<std::vector<Eigen::VectorXd>, std::string>
-  resolvePath(const CartesianPath& path, const Eigen::VectorXd& q_start_full);
+  /// @details Samples the path by arc length at a density set by the pose tolerance, landing
+  /// exactly on every sharp corner, solving IK to convergence at each sample and seeding from the
+  /// previous solution.
+  /// @return The resolved path, or a description of where and why IK failed.
+  tl::expected<ResolvedPath, std::string> resolvePath(const CartesianPath& path,
+                                                      const Eigen::VectorXd& q_start_full);
 
-  /// @brief Stage two: time-parameterizes a resolved joint path with TOPP-RA under the given
-  /// scales, decimating it to its shape-carrying waypoints first and retrying nearby
-  /// discretizations if the solver rejects one.
-  tl::expected<JointTrajectory, std::string>
-  timeParameterize(const std::vector<Eigen::VectorXd>& resolved, double velocity_scale,
-                   double acceleration_scale);
+  /// @brief Stage two for TimeOptimal: reduces the resolved path to the fewest waypoints that keep
+  /// the tool within its share of the pose tolerance, then times them with TOPP-RA, retrying with
+  /// tighter corner blending if the solver rejects the path.
+  tl::expected<JointTrajectory, std::string> timeOptimal(const ResolvedPath& resolved);
 
-  /// @brief Peak Cartesian tool rates over a timed trajectory, by finite difference of the tip
-  /// poses at the trajectory's sample period.
-  CartesianPeaks computeCartesianPeaks(const JointTrajectory& trajectory,
-                                       const CartesianPath& path) const;
+  /// @brief Stage two for Bounded: times each run between stops at the commanded Cartesian maxima,
+  /// slowing down locally wherever the joint limits require it.
+  tl::expected<JointTrajectory, std::string> timeBounded(const ResolvedPath& resolved) const;
 
   /// @brief A pointer to the scene.
   std::shared_ptr<Scene> scene_;
@@ -306,13 +290,13 @@ private:
   /// @details Cached at construction so buildFrameReferences() can wire each reference to its task
   /// on every plan() call; a non-empty value also marks the custom-components mode (in which the
   /// default OInK setup is bypassed). The other caller-supplied objectives are consumed into
-  /// oink_/tasks_/constraints_/barriers_ at construction, so they do not need to be retained.
+  /// oink_/extra_tasks_/constraints_/barriers_ at construction, so they do not need to be retained.
   std::vector<std::shared_ptr<FrameTask>> tracking_tasks_;
 
-  /// @brief Reused solver task list passed to Oink::solveIk each control step.
-  /// @details Assembled once at construction in the custom-components mode; rebuilt in place each
-  /// plan() in the default mode (the per-end-effector FrameTasks depend on the path and seed).
-  std::vector<std::shared_ptr<Task>> tasks_;
+  /// @brief Tasks solved alongside the tracking tasks but not required to converge.
+  /// @details The caller's extra tasks in the custom-components mode; the nullspace
+  /// ConfigurationTask, rebuilt each plan() from the seed, in the default mode.
+  std::vector<std::shared_ptr<Task>> extra_tasks_;
 
   /// @brief Constraints passed to the solver each step. Built once at construction.
   std::vector<std::shared_ptr<Constraints>> constraints_;
@@ -320,7 +304,7 @@ private:
   /// @brief Barriers passed to the solver each step. Built once at construction.
   std::vector<std::shared_ptr<Barrier>> barriers_;
 
-  /// @brief The TOPP-RA time parameterizer, used by both speed modes.
+  /// @brief The TOPP-RA time parameterizer, used by the TimeOptimal speed mode.
   /// @details Constructed once for the planner's joint group and reused across plan() calls.
   PathParameterizerTOPPRA toppra_;
 };
