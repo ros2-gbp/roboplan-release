@@ -1,3 +1,6 @@
+#include <limits>
+#include <optional>
+
 #include <nanobind/eigen/dense.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/filesystem.h>
@@ -7,6 +10,7 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <roboplan/core/constraints.hpp>
 #include <roboplan/core/path_utils.hpp>
 #include <roboplan/core/pose_utils.hpp>
 #include <roboplan/core/robot_body_filter.hpp>
@@ -42,8 +46,9 @@ void init_core_types(nanobind::module_& m) {
       .def(nanobind::init<>())
       .def(nanobind::init<const std::string&, const std::string&, const Eigen::Matrix4d&>(),
            "base_frame"_a, "tip_frame"_a, "tform"_a)
-      .def_rw("base_frame", &CartesianConfiguration::base_frame,
-              "The name of the base (or reference) frame.")
+      .def_rw(
+          "base_frame", &CartesianConfiguration::base_frame,
+          "The name of the base (or reference) frame. An empty frame name means the world frame.")
       .def_rw("tip_frame", &CartesianConfiguration::tip_frame,
               "The name of the tip (or target) frame.")
       .def_rw("tform", &CartesianConfiguration::tform,
@@ -137,7 +142,8 @@ void init_core_types(nanobind::module_& m) {
       .def(nanobind::init<const std::vector<std::string>&, const std::vector<std::string>&,
                           const std::vector<std::vector<Eigen::Matrix4d>>&>(),
            nanobind::arg("base_frames"), nanobind::arg("tip_frames"), nanobind::arg("tforms"))
-      .def_rw("base_frames", &CartesianPath::base_frames, "The names of the base frames.")
+      .def_rw("base_frames", &CartesianPath::base_frames,
+              "The names of the base frames. An empty frame name means the world frame.")
       .def_rw("tip_frames", &CartesianPath::tip_frames, "The names of the tip frames.")
       .def_rw("tforms", &CartesianPath::tforms,
               "The Cartesian transforms from each base frame to each tip frame.")
@@ -154,7 +160,8 @@ void init_core_types(nanobind::module_& m) {
                           std::vector<std::vector<Eigen::Matrix4d>>>(),
            nanobind::arg("base_frames"), nanobind::arg("tip_frames"), nanobind::arg("times"),
            nanobind::arg("tforms"))
-      .def_rw("base_frames", &CartesianTrajectory::base_frames, "The names of the base frames.")
+      .def_rw("base_frames", &CartesianTrajectory::base_frames,
+              "The names of the base frames. An empty frame name means the world frame.")
       .def_rw("tip_frames", &CartesianTrajectory::tip_frames, "The names of the tip frames.")
       .def_rw("times", &CartesianTrajectory::times, "The list of times.")
       .def_rw("tforms", &CartesianTrajectory::tforms,
@@ -217,8 +224,15 @@ void init_core_scene(nanobind::module_& m) {
            "seed"_a)
       .def("randomPositions", nanobind::overload_cast<>(&Scene::randomPositions),
            "Generates random positions for the robot model.")
-      .def("randomCollisionFreePositions", &Scene::randomCollisionFreePositions,
+      .def("randomCollisionFreePositions",
+           nanobind::overload_cast<size_t>(&Scene::randomCollisionFreePositions),
            "Generates random collision-free positions for the robot model.", "max_samples"_a = 1000)
+      .def("randomCollisionFreePositions",
+           nanobind::overload_cast<const std::vector<std::string>&, const Eigen::VectorXd&, size_t>(
+               &Scene::randomCollisionFreePositions),
+           "Generates random collision-free positions, randomizing only the specified joints and "
+           "taking all others from the reference configuration.",
+           "joint_names"_a, "q_reference"_a, "max_samples"_a = 1000)
       .def("hasCollisions", &Scene::hasCollisions,
            "Checks collisions at specified joint positions.", "q"_a, "debug"_a = false)
       .def("isValidConfiguration", &Scene::isValidConfiguration,
@@ -309,6 +323,8 @@ void init_core_scene(nanobind::module_& m) {
            "Set the joint positions for the full robot state.", "positions"_a)
       .def("getJointPositionIndices", &Scene::getJointPositionIndices,
            "Get the joint position indices for a set of joint names.", "joint_names"_a)
+      .def("getJointVelocityIndices", &Scene::getJointVelocityIndices,
+           "Get the joint velocity indices for a set of joint names.", "joint_names"_a)
       .def("getPositionLimitVectors", unwrap_expected(&Scene::getPositionLimitVectors),
            "Get the joint position limit vectors for a specified group.", "group_name"_a = "",
            "collapsed"_a = false)
@@ -334,10 +350,33 @@ void init_core_scene(nanobind::module_& m) {
            "Adds an octree geometry to the scene.", "name"_a, "parent_frame"_a, "octree"_a,
            "tform"_a, "color"_a)
       .def("updateGeometryPlacement", unwrap_expected(&Scene::updateGeometryPlacement),
-           "Updates the placement of an object geometry in the scene.", "name"_a, "parent_frame"_a,
-           "tform"_a)
+           "Updates the placement of an object geometry in the scene. Fails if the object is "
+           "attached.",
+           "name"_a, "parent_frame"_a, "tform"_a)
       .def("removeGeometry", unwrap_expected(&Scene::removeGeometry),
-           "Removes a geometry from the scene.", "name"_a)
+           "Removes a geometry from the scene. Fails if the object is attached.", "name"_a)
+      .def("attachObject", unwrap_expected(&Scene::attachObject),
+           "Attaches an object in the scene to a parent frame. Disables collisions between the "
+           "object and all geometry objects attached to the parent frame, as well as the "
+           "object and all geometries or frames specified in allowed_collision_bodies. If tform "
+           "is not given, the object keeps its current world pose. Invalidates existing "
+           "SceneContexts.",
+           "object_name"_a, "parent_frame"_a,
+           "allowed_collision_bodies"_a = std::vector<std::string>{},
+           "tform"_a = std::optional<Eigen::Matrix4d>())
+      .def("detachObject", unwrap_expected(&Scene::detachObject),
+           "Detaches an object from its parent frame, reparenting it to the universe frame at its "
+           "current world pose. Invalidates existing SceneContexts.",
+           "object_name"_a)
+      .def("reparentAttachedObject", unwrap_expected(&Scene::reparentAttachedObject),
+           "Moves an attached object to a new parent frame, such as when handing it over. If "
+           "tform is not given, the object keeps its current world pose. Invalidates existing "
+           "SceneContexts.",
+           "object_name"_a, "parent_frame"_a,
+           "allowed_collision_bodies"_a = std::vector<std::string>{},
+           "tform"_a = std::optional<Eigen::Matrix4d>())
+      .def("isObjectAttached", &Scene::isObjectAttached,
+           "Checks whether an object is attached via attachObject.", "object_name"_a)
       .def("getCollisionGeometryIDs", unwrap_expected(&Scene::getCollisionGeometryIds),
            "Gets a list of collision geometry IDs corresponding to a specified body.", "body"_a)
       .def("getRobotCollisionGeometryIds", &Scene::getRobotCollisionGeometryIds,
@@ -390,10 +429,19 @@ void init_core_scene(nanobind::module_& m) {
            "Sets the seed of this context's random number generator.", "seed"_a)
       .def("randomPositions", &SceneContext::randomPositions,
            "Generates random positions using this context's RNG.")
-      .def("randomCollisionFreePositions", &SceneContext::randomCollisionFreePositions,
+      .def("randomCollisionFreePositions",
+           nanobind::overload_cast<size_t>(&SceneContext::randomCollisionFreePositions),
            nanobind::call_guard<nanobind::gil_scoped_release>(),
            "Generates random collision-free positions using this context's RNG and scratch.",
            "max_samples"_a = 1000)
+      .def("randomCollisionFreePositions",
+           nanobind::overload_cast<const std::vector<std::string>&, const Eigen::VectorXd&, size_t>(
+               &SceneContext::randomCollisionFreePositions),
+           nanobind::call_guard<nanobind::gil_scoped_release>(),
+           "Generates random collision-free positions using this context's RNG and scratch, "
+           "randomizing only the specified joints and taking all others from the reference "
+           "configuration.",
+           "joint_names"_a, "q_reference"_a, "max_samples"_a = 1000)
       .def("getJointPositions", &SceneContext::getJointPositions,
            "This context's current joint positions.")
       .def("setJointPositions", &SceneContext::setJointPositions,
@@ -406,6 +454,99 @@ void init_core_scene(nanobind::module_& m) {
            "Whether the scene's collision geometry is still the one this context was built from.")
       .def("getScene", &SceneContext::getScene, nanobind::rv_policy::reference_internal,
            "The Scene this context was built from.");
+}
+
+void init_core_constraints(nanobind::module_& m) {
+  nanobind::class_<Constraint>(
+      m, "Constraint", "Base class for kinematic constraints that planners enforce by projection.")
+      .def("dimension", &Constraint::dimension,
+           "The number of residual coordinates this constraint contributes.")
+      .def("getGroupName", &Constraint::getGroupName,
+           "The joint group whose degrees of freedom a projection is allowed to move.")
+      .def("computeError", &Constraint::computeError,
+           "Computes the constraint residual at a configuration, which is zero where the "
+           "constraint is satisfied and otherwise the signed overshoot past the nearest bound.",
+           "q"_a)
+      .def("satisfies", &Constraint::satisfies,
+           "Checks whether a configuration satisfies this constraint.", "q"_a);
+
+  nanobind::class_<PoseConstraint, Constraint>(
+      m, "PoseConstraint",
+      "Constrains the pose of a robot frame to a box of allowed task space displacements.")
+      .def(nanobind::init<const std::shared_ptr<Scene>, const std::string&, const std::string&,
+                          const TaskSpaceVector&, const TaskSpaceVector&, const Eigen::Matrix4d&,
+                          const std::string&, double, double>(),
+           "scene"_a, "group_name"_a, "frame_name"_a,
+           "lower_bounds"_a = TaskSpaceVector::Constant(-std::numeric_limits<double>::infinity()),
+           "upper_bounds"_a = TaskSpaceVector::Constant(std::numeric_limits<double>::infinity()),
+           "tform"_a = Eigen::Matrix4d::Identity(), "reference_frame"_a = "",
+           "position_tolerance"_a = 1.0e-3, "orientation_tolerance"_a = 5.0e-3)
+      .def("computeDisplacement", &PoseConstraint::computeDisplacement,
+           "Computes the constrained frame's [x, y, z, roll, pitch, yaw] displacement from the "
+           "region frame.",
+           "q"_a)
+      .def_prop_ro("frame_name", &PoseConstraint::getFrameName,
+                   "The name of the constrained frame.")
+      .def_prop_ro("reference_frame", &PoseConstraint::getReferenceFrame,
+                   "The name of the frame the region transform is expressed in.")
+      .def_prop_ro("tform", &PoseConstraint::getTransform,
+                   "The pose of the region frame relative to the reference frame.")
+      .def_prop_ro("lower_bounds", &PoseConstraint::getLowerBounds,
+                   "The lower bounds on the frame's task space displacement.")
+      .def_prop_ro("upper_bounds", &PoseConstraint::getUpperBounds,
+                   "The upper bounds on the frame's task space displacement.")
+      .def_prop_ro("position_tolerance", &PoseConstraint::getPositionTolerance,
+                   "The position residual norm, in meters, below which the constraint is "
+                   "satisfied.")
+      .def_prop_ro("orientation_tolerance", &PoseConstraint::getOrientationTolerance,
+                   "The orientation residual norm, in radians, below which the constraint is "
+                   "satisfied.");
+
+  nanobind::class_<ConstraintProjectorOptions>(m, "ConstraintProjectorOptions",
+                                               "Options struct for constraint projection.")
+      .def(nanobind::init<double, size_t, double, double, double>(), "path_step_size"_a = 0.1,
+           "max_iters"_a = 50, "correction_step_size"_a = 1.0, "damping"_a = 1.0e-6,
+           "convergence_ratio"_a = 0.1)
+      .def_rw("path_step_size", &ConstraintProjectorOptions::path_step_size,
+              "The configuration-space step size taken between projections.")
+      .def_rw("max_iters", &ConstraintProjectorOptions::max_iters,
+              "The maximum number of projection iterations before giving up.")
+      .def_rw("correction_step_size", &ConstraintProjectorOptions::correction_step_size,
+              "The fraction of each computed correction to apply per projection iteration.")
+      .def_rw("damping", &ConstraintProjectorOptions::damping,
+              "Damping value for the Jacobian pseudoinverse.")
+      .def_rw("convergence_ratio", &ConstraintProjectorOptions::convergence_ratio,
+              "The fraction of each constraint's tolerance the projection converges to, leaving "
+              "headroom for the interpolation between projected configurations. Must be in "
+              "(0, 1].");
+
+  nanobind::class_<ConstraintProjector>(
+      m, "ConstraintProjector",
+      "Projects joint configurations onto the intersection of a set of constraints.")
+      .def(nanobind::init<const std::shared_ptr<Scene>, const std::string&,
+                          const std::vector<std::shared_ptr<Constraint>>&,
+                          const ConstraintProjectorOptions&>(),
+           "scene"_a, "group_name"_a, "constraints"_a, "options"_a = ConstraintProjectorOptions())
+      .def("satisfies", &ConstraintProjector::satisfies,
+           "Checks whether a configuration satisfies every constraint.", "q"_a)
+      .def(
+          "project",
+          [](ConstraintProjector& self,
+             const Eigen::VectorXd& q) -> std::optional<Eigen::VectorXd> {
+            Eigen::VectorXd q_projected = q;
+            if (!self.project(q_projected)) {
+              return std::nullopt;
+            }
+            return q_projected;
+          },
+          "Projects a configuration onto the constraints, returning None if the projection did "
+          "not converge.",
+          "q"_a)
+      .def("satisfiesAlongPath", &ConstraintProjector::satisfiesAlongPath,
+           "Checks whether a straight-line configuration-space path stays inside the constraints.",
+           "q_start"_a, "q_end"_a, "max_step_size"_a, "check_endpoints"_a = true)
+      .def("empty", &ConstraintProjector::empty,
+           "Whether the projector holds no constraints, and is therefore a no-op.");
 }
 
 void init_core_path_utils(nanobind::module_& m) {
@@ -432,10 +573,12 @@ void init_core_path_utils(nanobind::module_& m) {
 
   nanobind::class_<PathShortcuttingOptions>(m, "PathShortcuttingOptions",
                                             "Options struct for path shortcutting.")
-      .def(nanobind::init<const std::string&, double, unsigned int, int, unsigned int,
-                          unsigned int>(),
+      .def(nanobind::init<const std::string&, double, unsigned int, int, unsigned int, unsigned int,
+                          const ConstraintProjectorOptions&, double>(),
            "group_name"_a = "", "max_step_size"_a = 0.05, "max_iters"_a = 100, "seed"_a = 0,
-           "max_convergence_iters"_a = 20, "redundant_removal_iters"_a = 20)
+           "max_convergence_iters"_a = 20, "redundant_removal_iters"_a = 20,
+           "constraint_projection"_a = ConstraintProjectorOptions(),
+           "constrained_min_detour_ratio"_a = 1.1)
       .def_rw("group_name", &PathShortcuttingOptions::group_name,
               "The joint group name to be used for path shortcutting.")
       .def_rw("max_step_size", &PathShortcuttingOptions::max_step_size,
@@ -451,7 +594,13 @@ void init_core_path_utils(nanobind::module_& m) {
       .def_rw(
           "redundant_removal_iters", &PathShortcuttingOptions::redundant_removal_iters,
           "Cadence (in iterations) at which to interleave the redundant-vertex removal pass that "
-          "cleans up the micro-segments introduced by shortcutting. Must be greater than 0.");
+          "cleans up the micro-segments introduced by shortcutting. Must be greater than 0.")
+      .def_rw("constraint_projection", &PathShortcuttingOptions::constraint_projection,
+              "Options for the projection used when shortcutting with constraints.")
+      .def_rw("constrained_min_detour_ratio",
+              &PathShortcuttingOptions::constrained_min_detour_ratio,
+              "With constraints, the ratio of a section's length to the straight distance between "
+              "its ends below which no projected shortcut is attempted.");
 
   nanobind::class_<PathShortcutter>(
       m, "PathShortcutter", "Shortcuts joint paths with random sampling and checking connections.")
@@ -459,15 +608,13 @@ void init_core_path_utils(nanobind::module_& m) {
            "scene"_a, "options"_a)
       .def("shortcut", &PathShortcutter::shortcut,
            nanobind::call_guard<nanobind::gil_scoped_release>(),
-           "Attempts to shortcut a specified path.", "path"_a)
+           "Attempts to shortcut a specified path, optionally keeping it on a set of constraints.",
+           "path"_a, "constraints"_a = std::vector<std::shared_ptr<Constraint>>{})
       .def("getPathLengths", unwrap_expected(&PathShortcutter::getPathLengths),
            "Computes configuration distances from the start to each pose in a path.", "path"_a)
-      .def("getNormalizedPathScaling", unwrap_expected(&PathShortcutter::getNormalizedPathScaling),
-           "Computes length-normalized scaling values along a JointPath.", "path"_a)
-      .def("getConfigurationfromNormalizedPathScaling",
-           &PathShortcutter::getConfigurationFromNormalizedPathScaling,
-           "Gets joint configurations from a path with normalized joint scalings.", "path"_a,
-           "path_scalings"_a, "value"_a);
+      .def("getConfigurationAtPathLength", &PathShortcutter::getConfigurationAtPathLength,
+           "Gets the joint configuration at a given length along a path.", "path"_a,
+           "path_lengths"_a, "length"_a);
 }
 
 void init_core_pose_utils(nanobind::module_& m) {
