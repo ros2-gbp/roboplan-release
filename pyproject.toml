@@ -4,7 +4,6 @@ preview = ["pixi-build"]
 platforms = ["linux-64", "linux-aarch64", "osx-arm64", "win-64"]
 
 [tool.pixi.activation.env]
-CMAKE_INSTALL_PREFIX = "$CONDA_PREFIX"
 LD_LIBRARY_PATH      = "$CONDA_PREFIX/lib"
 ASAN_OPTIONS         = "symbolize=1:print_stacktrace=1"
 ASAN_SYMBOLIZER_PATH = "$CONDA_PREFIX/bin/llvm-symbolizer"
@@ -15,11 +14,6 @@ ROBOPLAN_EXTRA_CMAKE_ARGS = " "
 
 [tool.pixi.target.linux.activation.env]
 ROBOPLAN_LINKER_FLAG = "-fuse-ld=mold"
-
-[tool.pixi.target.osx-arm64.activation.env]
-# Temporary fix: XCode CLT update shipped with macOS 27 has changed
-# some linker implementation details that have not been upstreamed into LLVM yet
-ROBOPLAN_LINKER_FLAG = "-fuse-ld=/usr/bin/ld"
 
 [tool.pixi.feature.local.activation.env]
 CMAKE_INSTALL_MODE   = "SYMLINK"
@@ -34,9 +28,19 @@ CMAKE_BUILD_TYPE     = "Debug"
 [tool.pixi.feature.ci.target.win.activation.env]
 CMAKE_BUILD_TYPE = "RelWithDebInfo"
 
+# The superbuild installs into ./install (superbuild/CMakePresets.json).
+# PYTHONPATH must match the preset's PYTHON_SITELIB. Kept out of the ROS
+# environments, whose activation scripts set these themselves.
+[tool.pixi.feature.superbuild.activation.env]
+PYTHONPATH        = "$PIXI_PROJECT_ROOT/install/lib/python3/site-packages"
+CMAKE_PREFIX_PATH = "$PIXI_PROJECT_ROOT/install"
+
+[tool.pixi.feature.superbuild.target.win.activation.env]
+PYTHONPATH        = "%PIXI_PROJECT_ROOT%\\install\\lib\\python3\\site-packages"
+CMAKE_PREFIX_PATH = "%PIXI_PROJECT_ROOT%\\install"
+
 # Windows activation scripts expand %VAR% instead of $VAR.
 [tool.pixi.target.win.activation.env]
-CMAKE_INSTALL_PREFIX = "%CONDA_PREFIX%"
 # Use the MSVC-compatible clang driver: conda-forge packages are built with
 # MSVC and export MSVC-style flags that the GNU-style clang++ driver rejects.
 ROBOPLAN_C_COMPILER  = "clang-cl"
@@ -57,7 +61,7 @@ CMAKE_INSTALL_MODE = "COPY"
 # Configures the whole superbuild in one shared build tree, using the 'pixi'
 # preset (superbuild/CMakePresets.json). cxx_flags/extra_flags are for one-off
 # variant builds (see build_asan/build_timetrace below); leave default otherwise.
-configure = { cmd = "cmake -S superbuild --preset pixi {{ '-DCMAKE_CXX_FLAGS=' + cxx_flags if cxx_flags }} {{ '-DCMAKE_C_FLAGS=' + cxx_flags if cxx_flags }} {{ extra_flags }} $ROBOPLAN_EXTRA_CMAKE_ARGS", args = [
+configure = { cmd = "cmake -S superbuild --preset pixi {{ '-DCMAKE_CXX_FLAGS=' + cxx_flags if cxx_flags }} {{ '-DCMAKE_C_FLAGS=' + cxx_flags if cxx_flags }} -UGENERATE_PYTHON_STUBS {{ extra_flags }} $ROBOPLAN_EXTRA_CMAKE_ARGS", args = [
   { arg = "cxx_flags", default = "" },
   { arg = "extra_flags", default = "" },
 ] }
@@ -76,7 +80,7 @@ build = { cmd = "cmake --build build {{ '--target ' + package_name + '/all' if p
   { arg = "extra_flags", default = "" },
 ] }
 
-# Installs every package into $CONDA_PREFIX. Always installs everything --
+# Installs every package into ./install. Always installs everything --
 # one shared install tree, no meaningful "install just one package".
 install = { cmd = "cmake --install build", depends-on = [
   { task = "build", args = [
@@ -89,9 +93,11 @@ install = { cmd = "cmake --install build", depends-on = [
   { arg = "extra_flags", default = "" },
 ] }
 
+clean = { cmd = "cmake -E rm -rf build install" }
+
 build_asan = { cmd = "cmake --build build {{ '--target ' + package_name + '/all' if package_name }}", depends-on = [
   { task = "configure", args = [
-    "-fsanitize=address",
+    "-fsanitize=address -DEIGEN_MALLOC_ALREADY_ALIGNED=1",
     "-DGENERATE_PYTHON_STUBS=OFF",
   ] },
 ], args = [
@@ -115,7 +121,14 @@ test = { cmd = "ctest -V --test-dir build{{ '/' + package_name if package_name }
 
 test_py  = { cmd = "python -m pytest --capture=no */bindings/test roboplan_examples/test" }
 test_all = { depends-on = ["test_py", "test"] }
-test_benchmarks = { cmd = "python -m pytest benchmarks/ --benchmark-json pytest_benchmarks.json" }
+test_benchmarks = { cmd = """
+  python -m pytest benchmarks/ \
+  --benchmark-json pytest_benchmarks.json \
+  --benchmark-disable-gc \
+  --benchmark-warmup=on \
+  --benchmark-group-by=func \
+  --benchmark-min-rounds=10
+  """, env = { OMP_NUM_THREADS = "1", OPENBLAS_NUM_THREADS = "1", MKL_NUM_THREADS = "1" } }
 
 # Clang-tidy against the superbuild's single compile_commands.json. Pass a
 # package name to scope to just that package's sources.
@@ -141,14 +154,17 @@ llvm-tools  = ">=22.1.8,<23"
 
 # Shared version pins between packages
 [tool.pixi.workspace.dependencies]
-# Python bindings dependencies
 
+# Python bindings dependencies
 # Setting Python to `*` allows the various ROS distros to pull in whatever
 # Python they want without us having to maintain multiple pins in the
 # downstream Pixi packages
 python            = "*"
-nanobind          = ">=2.8.0,<3"
+nanobind          = ">=3.1.0,<4"
 numpy             = "*"
+
+# C++ dependencies
+nanoflann = ">=2.0.1,<3"
 
 # Test dependencies
 gtest = ">=1.17.0,<2"
@@ -184,8 +200,8 @@ roboplan-examples = { path = "roboplan_examples" }
 lint = "pre-commit run --all-files"
 
 [tool.pixi.environments]
-default = { features = ["local", "toolchain"] }
-ci = { features = ["ci", "toolchain"] }
+default = { features = ["local", "toolchain", "superbuild"] }
+ci = { features = ["ci", "toolchain", "superbuild"] }
 lint = { features = ["lint"], no-default-feature = true }
 
 # ROS 2 environments
