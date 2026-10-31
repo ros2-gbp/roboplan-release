@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(roboplan_rrt VERSION 0.7.0)
+project(roboplan_rrt VERSION 0.8.0)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT
                                              STREQUAL "MSVC")
@@ -26,13 +26,41 @@ endif()
 # recursion issues with symlink installs.
 find_package(ament_cmake QUIET)
 
+# nanoflann: the system copy if it is new enough for the manifold metrics
+# (conda-forge nanoflann or ROS nanoflann_vendor; Ubuntu's libnanoflann-dev is
+# too old), otherwise fetched at configure time. Linked privately, so it is
+# neither installed nor exported.
+find_package(nanoflann 2.0.1 QUIET)
+if(NOT TARGET nanoflann::nanoflann)
+  message(STATUS "nanoflann >= 2.0.1 not found, fetching it")
+  include(FetchContent)
+  FetchContent_Declare(
+    nanoflann
+    GIT_REPOSITORY https://github.com/jlblancoc/nanoflann.git
+    GIT_TAG 2.0.1
+    # Only the header is needed.
+    SOURCE_SUBDIR
+    include)
+  FetchContent_MakeAvailable(nanoflann)
+  # A regular (not IMPORTED) target, so the include directory is passed as -I
+  # and wins over an older nanoflann in a system prefix, such as an outdated ROS
+  # nanoflann_vendor under /opt/ros, which only appears as -isystem.
+  add_library(nanoflann INTERFACE)
+  target_include_directories(nanoflann
+                             INTERFACE ${nanoflann_SOURCE_DIR}/include)
+  add_library(nanoflann::nanoflann ALIAS nanoflann)
+endif()
+
 # Add libraries
-add_library(roboplan_rrt SHARED src/constraints.cpp src/rrt.cpp)
+add_library(roboplan_rrt SHARED src/kd_tree.cpp src/rrt.cpp)
 target_include_directories(
   roboplan_rrt PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
                       $<INSTALL_INTERFACE:include>)
 set_property(TARGET roboplan_rrt PROPERTY CXX_STANDARD 20)
-target_link_libraries(roboplan_rrt roboplan::roboplan)
+target_link_libraries(
+  roboplan_rrt
+  PUBLIC roboplan::roboplan
+  PRIVATE nanoflann::nanoflann)
 # Alias so this works via add_subdirectory() too, not just installed
 # find_package().
 add_library(roboplan_rrt::roboplan_rrt ALIAS roboplan_rrt)
