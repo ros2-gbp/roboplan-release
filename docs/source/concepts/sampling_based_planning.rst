@@ -49,6 +49,14 @@ Goal biasing is disabled in this mode, since the ``CONNECT`` step already pulls 
 
 RRT-Connect was introduced by `Kuffner and LaValle (2000) <http://msl.cs.illinois.edu/~lavalle/papers/KufLav00.pdf>`_.
 
+Multiple Goals
+~~~~~~~~~~~~~~
+
+``RRT::planToAny`` plans to any of a set of goal configurations, such as several IK solutions for the same grasp, ending at whichever it reaches first (or the cheapest found, if ``fast_return`` is false).
+Each goal becomes a root of the goal tree in RRT-Connect, and goal biasing picks one of the goals at random.
+If any goal can be connected to the start directly, the closest such goal is returned immediately, regardless of ``fast_return``.
+The returned ``RRTPlan`` holds the ``path`` and the ``goal_index`` of the goal it reached.
+
 RRT*
 ~~~~
 
@@ -90,7 +98,7 @@ Constrained Planning
 Many manipulation tasks restrict *how* the robot moves, not just where it ends up, such as carrying a full cup upright or sliding a drawer along its rail.
 These are end-effector pose constraints that must hold at every point of the path, which a goal cannot express.
 
-``RRT::plan`` takes an optional list of constraints, and passing a non-empty list switches the planner to the constrained extension of CBiRRT2
+``RRT::plan`` and ``RRT::planToAny`` take an optional list of constraints, and passing a non-empty list switches the planner to the constrained extension of CBiRRT2
 (`Berenson et al. (2009) <https://personalrobotics.cs.washington.edu/publications/berenson2009cbirrt.pdf>`_).
 Samples are still drawn from the whole configuration space, but a tree no longer jumps ``max_connection_distance`` toward one in a single step.
 Instead, it walks there in short ``path_step_size`` hops, and after each hop **projects** the configuration back onto the constraints before accepting it as a node.
@@ -160,14 +168,12 @@ Practical notes
   than silently moving the endpoints you asked for; project them yourself first.
 - **Budget more nodes.** Every projected hop becomes a node, so constrained planning wants a smaller
   ``max_connection_distance`` and a much larger ``max_nodes`` than unconstrained planning.
-- ``rrt_star`` **is worth enabling.** Walking in small hops leaves a zigzagging path.
-  Rewiring reconnects nodes with straight segments, and a long one between two configurations on a
-  curved constraint set leaves it and is rejected, but the constrained extension packs nodes only
-  ``path_step_size`` apart, so most candidates are short enough to be accepted.
-  Those short rewires collapse the zigzag, giving roughly a quarter shorter paths on the
-  bundled example.
-- **Do not shortcut a constrained path.** :doc:`path_shortcutting` splices in straight
-  configuration-space segments, which pull the path back off the constraints.
+- **Shortcut with the same constraints.** Walking in small hops leaves a zigzagging path.
+  Passing the constraints to ``PathShortcutter::shortcut`` keeps every shortcut on them, using the
+  same constrained extension when a straight one would leave them (see :doc:`path_shortcutting`).
+  Shortcutting without them pulls the path back off the constraints.
+- ``rrt_star`` **can also help.** Rewiring collapses some of the zigzag during planning, but is
+  slower and leaves longer paths than constrained shortcutting, especially for pinned constraints.
 - **Constraints can disconnect the space.** Bounding rotational degrees of freedom on a
   non-redundant arm leaves a thin set that splits into components a constrained path cannot cross,
   since crossing would mean tipping the frame over. Two valid configurations may then be
@@ -182,13 +188,8 @@ Keeping a gripper upright inside a safe zone is a single ``PoseConstraint``:
 
    import numpy as np
    import pinocchio as pin
-   from roboplan.rrt import (
-       ConstraintProjector,
-       ConstraintProjectorOptions,
-       PoseConstraint,
-       RRT,
-       RRTOptions,
-   )
+   from roboplan.core import ConstraintProjector, ConstraintProjectorOptions, PoseConstraint
+   from roboplan.rrt import RRT, RRTOptions
 
    # The region frame is the nominal pose. A half turn about x points the gripper straight down,
    # so a zero displacement means perfectly upright.
@@ -228,29 +229,27 @@ Keeping a gripper upright inside a safe zone is a single ``PoseConstraint``:
 random goals inside the zone, plots the gripper's tilt and height against the limits, and contrasts
 the result with the same problem planned unconstrained.
 
-State Spaces and the ``dynotree`` Library
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+State Spaces and the ``nanoflann`` Library
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Every RRT iteration queries the tree for the node closest to a new sample.
-RoboPlan delegates these queries to `dynotree <https://github.com/quimortiz/dynotree>`_, a header-only k-d tree library vendored into ``roboplan_rrt/include/dynotree``.
+RoboPlan delegates these queries to `nanoflann <https://github.com/jlblancoc/nanoflann>`_, a header-only k-d tree library.
 
 **k-d trees.**
-dynotree partitions the state space with a k-d tree, so nearest-neighbor queries run in roughly logarithmic rather than linear time in the number of nodes.
-The tree splits along whichever dimension currently has the widest spread, and its branch-and-bound search uses each state space's ``distance_to_rectangle`` routine to prune subtrees that cannot contain a closer neighbor.
+nanoflann partitions the state space with a k-d tree, so nearest-neighbor queries run in roughly logarithmic rather than linear time in the number of nodes.
+RoboPlan uses its incremental index, a single self-balancing tree that accepts one point at a time as the planner grows, and whose branch-and-bound search prunes any subtree whose bounding box cannot contain a closer neighbor.
 
 **State spaces.**
 A naive planner treats every joint as a coordinate in :math:`\mathbb{R}^n` with a plain Euclidean norm, which is incorrect for joints that are not a Euclidean line.
 A continuous (unlimited) revolute joint, for example, lives on a circle: the angles :math:`-\pi` and :math:`+\pi` are the same point, and the shortest distance between two angles must wrap around.
-dynotree models each degree of freedom with the correct topology and supplies matching distance, interpolation, and sampling operations:
+RoboPlan gives nanoflann a product metric that tags each coordinate with its topology:
 
-- **Rn** — bounded real-valued coordinates (:math:`\mathbb{R}^n`), used for prismatic and limited revolute joints.
-- **SO(2)** — the circle group, used for continuous revolute joints so that distances wrap correctly across :math:`\pm\pi`.
-- **SE(2)** — the planar group :math:`\mathbb{R}^2 \times SO(2)`, used for planar joints such as mobile bases: a 2D translation plus a wrapping heading angle.
-- **SO(3)** — the rotation group for 3D orientations. RoboPlan does not use it yet; floating joints are unsupported.
+- **R** — a real-valued coordinate, used for prismatic and limited revolute joints and for the translation of planar joints.
+- **SO(2)** — the circle group, used for continuous revolute joints and the heading of planar joints so that distances wrap correctly across :math:`\pm\pi`.
 
-RoboPlan builds a ``dynotree::Combined`` state space by concatenating one of these components per joint in the planning group.
-Continuous joints are mapped to ``SO2``, planar joints to ``Rn:2`` + ``SO2`` (i.e., SE(2)), and ordinary single-DOF joints to ``Rn:1``.
+This is the same configuration distance the planner uses for costs and connection lengths, and nanoflann's manifold-aware pruning keeps the search exact on the wrapped coordinates.
 Nearest-neighbor results therefore respect the true configuration-space metric: a sample near :math:`+\pi` is found to be close to a tree node near :math:`-\pi`.
+Floating joints (SO(3)) are not supported yet.
 
 Configuration
 ~~~~~~~~~~~~~
@@ -285,7 +284,7 @@ The planner is configured through ``RRTOptions``, passed at construction and mod
 | ``constraint_projection``         | Projection options (constrained only)                      | see below |
 +-----------------------------------+------------------------------------------------------------+-----------+
 
-The last one applies only when ``plan`` is given constraints; see :ref:`constrained-planning`.
+The last one applies only when ``plan`` or ``planToAny`` is given constraints; see :ref:`constrained-planning`.
 ``constraint_projection`` is a ``ConstraintProjectorOptions``:
 
 +-----------------------------------+------------------------------------------------------------+-----------+
