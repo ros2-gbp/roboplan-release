@@ -55,7 +55,9 @@ class CartesianConfiguration:
 
     @property
     def base_frame(self) -> str:
-        """The name of the base (or reference) frame."""
+        """
+        The name of the base (or reference) frame. An empty frame name means the world frame.
+        """
 
     @base_frame.setter
     def base_frame(self, arg: str, /) -> None: ...
@@ -310,7 +312,9 @@ class CartesianPath:
 
     @property
     def base_frames(self) -> list[str]:
-        """The names of the base frames."""
+        """
+        The names of the base frames. An empty frame name means the world frame.
+        """
 
     @base_frames.setter
     def base_frames(self, arg: Sequence[str], /) -> None: ...
@@ -342,7 +346,9 @@ class CartesianTrajectory:
 
     @property
     def base_frames(self) -> list[str]:
-        """The names of the base frames."""
+        """
+        The names of the base frames. An empty frame name means the world frame.
+        """
 
     @base_frames.setter
     def base_frames(self, arg: Sequence[str], /) -> None: ...
@@ -446,8 +452,15 @@ class Scene:
     def randomPositions(self) -> Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]:
         """Generates random positions for the robot model."""
 
+    @overload
     def randomCollisionFreePositions(self, max_samples: int = 1000) -> Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')] | None:
         """Generates random collision-free positions for the robot model."""
+
+    @overload
+    def randomCollisionFreePositions(self, joint_names: Sequence[str], q_reference: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], max_samples: int = 1000) -> Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')] | None:
+        """
+        Generates random collision-free positions, randomizing only the specified joints and taking all others from the reference configuration.
+        """
 
     def hasCollisions(self, q: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], debug: bool = False) -> bool:
         """Checks collisions at specified joint positions."""
@@ -525,6 +538,9 @@ class Scene:
     def getJointPositionIndices(self, joint_names: Sequence[str]) -> Annotated[NDArray[numpy.int32], dict(shape=(None,), order='C')]:
         """Get the joint position indices for a set of joint names."""
 
+    def getJointVelocityIndices(self, joint_names: Sequence[str]) -> Annotated[NDArray[numpy.int32], dict(shape=(None,), order='C')]:
+        """Get the joint velocity indices for a set of joint names."""
+
     def getPositionLimitVectors(self, group_name: str = '', collapsed: bool = False) -> tuple[Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]]:
         """Get the joint position limit vectors for a specified group."""
 
@@ -553,10 +569,30 @@ class Scene:
         """Adds an octree geometry to the scene."""
 
     def updateGeometryPlacement(self, name: str, parent_frame: str, tform: Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')]) -> None:
-        """Updates the placement of an object geometry in the scene."""
+        """
+        Updates the placement of an object geometry in the scene. Fails if the object is attached.
+        """
 
     def removeGeometry(self, name: str) -> None:
-        """Removes a geometry from the scene."""
+        """Removes a geometry from the scene. Fails if the object is attached."""
+
+    def attachObject(self, object_name: str, parent_frame: str, allowed_collision_bodies: Sequence[str] = [], tform: Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')] | None = None) -> None:
+        """
+        Attaches an object in the scene to a parent frame. Disables collisions between the object and all geometry objects attached to the parent frame, as well as the object and all geometries or frames specified in allowed_collision_bodies. If tform is not given, the object keeps its current world pose. Invalidates existing SceneContexts.
+        """
+
+    def detachObject(self, object_name: str) -> None:
+        """
+        Detaches an object from its parent frame, reparenting it to the universe frame at its current world pose. Invalidates existing SceneContexts.
+        """
+
+    def reparentAttachedObject(self, object_name: str, parent_frame: str, allowed_collision_bodies: Sequence[str] = [], tform: Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')] | None = None) -> None:
+        """
+        Moves an attached object to a new parent frame, such as when handing it over. If tform is not given, the object keeps its current world pose. Invalidates existing SceneContexts.
+        """
+
+    def isObjectAttached(self, object_name: str) -> bool:
+        """Checks whether an object is attached via attachObject."""
 
     def getCollisionGeometryIDs(self, body: str) -> list[int]:
         """
@@ -618,9 +654,16 @@ class SceneContext:
     def randomPositions(self) -> Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]:
         """Generates random positions using this context's RNG."""
 
+    @overload
     def randomCollisionFreePositions(self, max_samples: int = 1000) -> Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')] | None:
         """
         Generates random collision-free positions using this context's RNG and scratch.
+        """
+
+    @overload
+    def randomCollisionFreePositions(self, joint_names: Sequence[str], q_reference: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], max_samples: int = 1000) -> Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')] | None:
+        """
+        Generates random collision-free positions using this context's RNG and scratch, randomizing only the specified joints and taking all others from the reference configuration.
         """
 
     def getJointPositions(self) -> Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]:
@@ -641,6 +684,138 @@ class SceneContext:
 
     def getScene(self) -> Scene:
         """The Scene this context was built from."""
+
+class Constraint:
+    """
+    Base class for kinematic constraints that planners enforce by projection.
+    """
+
+    def dimension(self) -> int:
+        """The number of residual coordinates this constraint contributes."""
+
+    def getGroupName(self) -> str:
+        """
+        The joint group whose degrees of freedom a projection is allowed to move.
+        """
+
+    def computeError(self, q: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]) -> Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]:
+        """
+        Computes the constraint residual at a configuration, which is zero where the constraint is satisfied and otherwise the signed overshoot past the nearest bound.
+        """
+
+    def satisfies(self, q: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]) -> bool:
+        """Checks whether a configuration satisfies this constraint."""
+
+class PoseConstraint(Constraint):
+    """
+    Constrains the pose of a robot frame to a box of allowed task space displacements.
+    """
+
+    def __init__(self, scene: Scene, group_name: str, frame_name: str, lower_bounds: Annotated[NDArray[numpy.float64], dict(shape=(6), order='C')] = ..., upper_bounds: Annotated[NDArray[numpy.float64], dict(shape=(6), order='C')] = ..., tform: Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')] = ..., reference_frame: str = '', position_tolerance: float = 0.001, orientation_tolerance: float = 0.005) -> None: ...
+
+    def computeDisplacement(self, q: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]) -> Annotated[NDArray[numpy.float64], dict(shape=(6), order='C')]:
+        """
+        Computes the constrained frame's [x, y, z, roll, pitch, yaw] displacement from the region frame.
+        """
+
+    @property
+    def frame_name(self) -> str:
+        """The name of the constrained frame."""
+
+    @property
+    def reference_frame(self) -> str:
+        """The name of the frame the region transform is expressed in."""
+
+    @property
+    def tform(self) -> Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')]:
+        """The pose of the region frame relative to the reference frame."""
+
+    @property
+    def lower_bounds(self) -> Annotated[NDArray[numpy.float64], dict(shape=(6), order='C')]:
+        """The lower bounds on the frame's task space displacement."""
+
+    @property
+    def upper_bounds(self) -> Annotated[NDArray[numpy.float64], dict(shape=(6), order='C')]:
+        """The upper bounds on the frame's task space displacement."""
+
+    @property
+    def position_tolerance(self) -> float:
+        """
+        The position residual norm, in meters, below which the constraint is satisfied.
+        """
+
+    @property
+    def orientation_tolerance(self) -> float:
+        """
+        The orientation residual norm, in radians, below which the constraint is satisfied.
+        """
+
+class ConstraintProjectorOptions:
+    """Options struct for constraint projection."""
+
+    def __init__(self, path_step_size: float = 0.1, max_iters: int = 50, correction_step_size: float = 1.0, damping: float = 1e-06, convergence_ratio: float = 0.1) -> None: ...
+
+    @property
+    def path_step_size(self) -> float:
+        """The configuration-space step size taken between projections."""
+
+    @path_step_size.setter
+    def path_step_size(self, arg: float, /) -> None: ...
+
+    @property
+    def max_iters(self) -> int:
+        """The maximum number of projection iterations before giving up."""
+
+    @max_iters.setter
+    def max_iters(self, arg: int, /) -> None: ...
+
+    @property
+    def correction_step_size(self) -> float:
+        """
+        The fraction of each computed correction to apply per projection iteration.
+        """
+
+    @correction_step_size.setter
+    def correction_step_size(self, arg: float, /) -> None: ...
+
+    @property
+    def damping(self) -> float:
+        """Damping value for the Jacobian pseudoinverse."""
+
+    @damping.setter
+    def damping(self, arg: float, /) -> None: ...
+
+    @property
+    def convergence_ratio(self) -> float:
+        """
+        The fraction of each constraint's tolerance the projection converges to, leaving headroom for the interpolation between projected configurations. Must be in (0, 1].
+        """
+
+    @convergence_ratio.setter
+    def convergence_ratio(self, arg: float, /) -> None: ...
+
+class ConstraintProjector:
+    """
+    Projects joint configurations onto the intersection of a set of constraints.
+    """
+
+    def __init__(self, scene: Scene, group_name: str, constraints: Sequence[Constraint], options: ConstraintProjectorOptions = ...) -> None: ...
+
+    def satisfies(self, q: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]) -> bool:
+        """Checks whether a configuration satisfies every constraint."""
+
+    def project(self, q: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]) -> Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')] | None:
+        """
+        Projects a configuration onto the constraints, returning None if the projection did not converge.
+        """
+
+    def satisfiesAlongPath(self, q_start: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], q_end: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], max_step_size: float, check_endpoints: bool = True) -> bool:
+        """
+        Checks whether a straight-line configuration-space path stays inside the constraints.
+        """
+
+    def empty(self) -> bool:
+        """Whether the projector holds no constraints, and is therefore a no-op."""
 
 @overload
 def computeFramePath(scene: Scene, q_start: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], q_end: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], frame_name: str, max_step_size: float) -> list[Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')]]:
@@ -665,7 +840,7 @@ def computePathLength(scene: Scene, group_name: str, path: JointPath) -> float:
 class PathShortcuttingOptions:
     """Options struct for path shortcutting."""
 
-    def __init__(self, group_name: str = '', max_step_size: float = 0.05, max_iters: int = 100, seed: int = 0, max_convergence_iters: int = 20, redundant_removal_iters: int = 20) -> None: ...
+    def __init__(self, group_name: str = '', max_step_size: float = 0.05, max_iters: int = 100, seed: int = 0, max_convergence_iters: int = 20, redundant_removal_iters: int = 20, constraint_projection: ConstraintProjectorOptions = ..., constrained_min_detour_ratio: float = 1.1) -> None: ...
 
     @property
     def group_name(self) -> str:
@@ -715,24 +890,39 @@ class PathShortcuttingOptions:
     @redundant_removal_iters.setter
     def redundant_removal_iters(self, arg: int, /) -> None: ...
 
+    @property
+    def constraint_projection(self) -> ConstraintProjectorOptions:
+        """Options for the projection used when shortcutting with constraints."""
+
+    @constraint_projection.setter
+    def constraint_projection(self, arg: ConstraintProjectorOptions, /) -> None: ...
+
+    @property
+    def constrained_min_detour_ratio(self) -> float:
+        """
+        With constraints, the ratio of a section's length to the straight distance between its ends below which no projected shortcut is attempted.
+        """
+
+    @constrained_min_detour_ratio.setter
+    def constrained_min_detour_ratio(self, arg: float, /) -> None: ...
+
 class PathShortcutter:
     """Shortcuts joint paths with random sampling and checking connections."""
 
     def __init__(self, scene: Scene, options: PathShortcuttingOptions) -> None: ...
 
-    def shortcut(self, path: JointPath) -> JointPath:
-        """Attempts to shortcut a specified path."""
+    def shortcut(self, path: JointPath, constraints: Sequence[Constraint] = []) -> JointPath:
+        """
+        Attempts to shortcut a specified path, optionally keeping it on a set of constraints.
+        """
 
     def getPathLengths(self, path: JointPath) -> Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]:
         """
         Computes configuration distances from the start to each pose in a path.
         """
 
-    def getNormalizedPathScaling(self, path: JointPath) -> Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]:
-        """Computes length-normalized scaling values along a JointPath."""
-
-    def getConfigurationfromNormalizedPathScaling(self, path: JointPath, path_scalings: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], value: float) -> tuple[Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], int]:
-        """Gets joint configurations from a path with normalized joint scalings."""
+    def getConfigurationAtPathLength(self, path: JointPath, path_lengths: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], length: float) -> tuple[Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], int]:
+        """Gets the joint configuration at a given length along a path."""
 
 def poseError(a: Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')], b: Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')]) -> tuple[float, float]:
     """
