@@ -44,12 +44,21 @@ if(BUILD_TESTING)
   enable_testing()
 endif()
 
+# Windows has no RPATH, so build-tree executables (including the C++ tests) only
+# find their DLLs if they sit in the same directory.
+if(WIN32)
+  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endif()
+
 # Find pinocchio here, before any add_subdirectory(), so the side effects of its
 # config file reach every package to be consistent with the standalone builds.
 # That includes its IMPORTED targets: pinocchio's interface references
 # coal::coal via $<TARGET_PROPERTY:...>, which CMake resolves in the consuming
 # target's directory, so coal::coal must be visible to every sibling package.
 find_package(pinocchio 4.1.0 REQUIRED)
+# Likewise tl::expected, which roboplan::roboplan links publicly when a system
+# copy is found (roboplan_core falls back to its bundled header otherwise).
+find_package(tl-expected QUIET)
 
 add_subdirectory("${ROBOPLAN_REPOSITORY_ROOT}/roboplan_common"
                  "roboplan_common")

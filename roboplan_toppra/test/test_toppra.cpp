@@ -3,7 +3,10 @@
 #include <gtest/gtest.h>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <vector>
+
+#include <yaml-cpp/yaml.h>
 
 #include <roboplan/core/scene.hpp>
 #include <roboplan_example_models/resources.hpp>
@@ -400,6 +403,111 @@ TEST(LinearBlendPathTest, RequiresAtLeastTwoWaypoints) {
   a << 0.0, 0.0;
   const toppra::Vectors waypoints = {a};
   EXPECT_THROW(LinearBlendPath(waypoints, 0.1), std::invalid_argument);
+}
+
+// The splines bend hardest at their knots, which the solver's default uniform grid can step over,
+// so every mode must still respect the acceleration limit through a sparse cornered path.
+TEST_F(RoboPlanToppraTest, SplinesRespectAccelerationLimitsAtKnots) {
+  JointPath path;
+  path.joint_names = {"shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
+                      "wrist_1_joint",      "wrist_2_joint",       "wrist_3_joint"};
+  Eigen::VectorXd q0(6), q_corner(6), q1(6);
+  q0 << -1.8, -2.0, 1.0, -1.6, -1.7, 1.0;
+  q_corner << -1.0, -1.2, 0.4, -1.0, -1.1, 0.5;
+  q1 << -1.4, -1.6, 1.1, -0.4, -1.6, 1.2;
+  path.positions = {q0, q_corner, q1};
+
+  auto toppra = PathParameterizerTOPPRA(scene, "arm");
+  const Eigen::VectorXd accel_limit =
+      scene->getAccelerationLimitVectors("arm").value().second.cwiseAbs();
+  for (const auto mode :
+       {SplineFittingMode::Hermite, SplineFittingMode::Cubic, SplineFittingMode::Adaptive}) {
+    const auto result = toppra.generate(path, {0.01, mode});
+    ASSERT_TRUE(result.has_value());
+    EXPECT_LT(peakRatio(result->accelerations, accel_limit), 1.02)
+        << "mode " << static_cast<int>(mode);
+  }
+}
+
+// A 15 cm straight tool lift resolved by the Cartesian planner. The profile rides the acceleration
+// limit along the blend arc, which made the forward pass fail with interpolation discretization.
+TEST_F(RoboPlanToppraTest, LinearBlendSolvesWhenRidingTheAccelerationLimit) {
+  JointPath path;
+  path.joint_names = {"shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
+                      "wrist_1_joint",      "wrist_2_joint",       "wrist_3_joint"};
+  Eigen::VectorXd q0(6), q1(6), q2(6);
+  q0 << 1.1509636545569641, 0.58097977584493954, -0.93453857194970769, -1.6010512505949699,
+      0.1825278208643249, 1.9349500979224299;
+  q1 << 1.1509633372292987, 0.49381545118407677, -0.9676909407612645, -1.4807362615841591,
+      0.18252795458676488, 1.9349510503546432;
+  q2 << 1.1509633328391553, 0.38633108813710165, -0.95942157584555943, -1.3815212389990079,
+      0.18252795571420816, 1.9349510270572197;
+  path.positions = {q0, q1, q2};
+
+  auto toppra = PathParameterizerTOPPRA(scene, "arm");
+  const auto result =
+      toppra.generate(path, {0.01, SplineFittingMode::LinearBlend, 1.0, 1.0, 10, 0.05, 0.0025});
+  ASSERT_TRUE(result.has_value()) << result.error();
+}
+
+// TOPP-RA's path coordinates for a planar joint are world-frame (x, y, theta), but its velocity
+// limits, like Pinocchio's velocities, are in the joint's body frame. Driving along world x while
+// turning a quarter turn sweeps that motion from the body's x axis onto its slower y axis, so the
+// reported velocities must match the body-frame finite differences and respect that limit.
+TEST(PlanarToppraTest, LimitsAndReportsPlanarVelocitiesInTheBodyFrame) {
+  const std::string urdf = R"(<robot name="base">
+    <link name="world"/>
+    <link name="base"/>
+    <joint name="base_joint" type="planar">
+      <parent link="world"/>
+      <child link="base"/>
+    </joint>
+    <link name="arm"/>
+    <joint name="arm_joint" type="revolute">
+      <parent link="base"/>
+      <child link="arm"/>
+      <axis xyz="0 0 1"/>
+      <limit lower="-3.14" upper="3.14" effort="1.0" velocity="0.5"/>
+    </joint>
+  </robot>)";
+  auto scene = std::make_shared<Scene>("planar_scene", loadUrdfSceneDescriptionFromXml(urdf, {}));
+  scene->importJointLimitsFromConfig(YAML::Load(R"(
+    joint_limits:
+      base_joint:
+        max_velocity: [1.0, 0.2, 1.0]
+        max_acceleration: [0.5, 0.5, 1.0]
+      arm_joint:
+        max_acceleration: [1.0])"));
+
+  // Planar positions are (x, y, cos(theta), sin(theta)), followed by the arm joint.
+  JointPath path;
+  path.joint_names = {"base_joint", "arm_joint"};
+  path.positions = {Eigen::Vector<double, 5>(0.0, 0.0, 1.0, 0.0, 0.0),
+                    Eigen::Vector<double, 5>(2.0, 0.0, 0.0, 1.0, 1.0)};
+
+  auto toppra = PathParameterizerTOPPRA(scene, "");
+  const auto result = toppra.generate(path, {0.01, SplineFittingMode::Cubic});
+  ASSERT_TRUE(result.has_value()) << result.error();
+
+  const Eigen::VectorXd vel_limit = scene->getVelocityLimitVectors("").value().second.cwiseAbs();
+  const Eigen::VectorXd accel_limit =
+      scene->getAccelerationLimitVectors("").value().second.cwiseAbs();
+  EXPECT_LT(peakRatio(result->velocities, vel_limit), 1.02);
+  EXPECT_LT(peakRatio(result->accelerations, accel_limit), 1.02);
+
+  double max_error = 0.0;
+  for (size_t i = 0; i + 1 < result->times.size(); ++i) {
+    const double dt = result->times.at(i + 1) - result->times.at(i);
+    if (dt < 1.0e-6) {
+      continue;
+    }
+    const Eigen::VectorXd finite_difference =
+        scene->difference(result->positions.at(i), result->positions.at(i + 1)) / dt;
+    const Eigen::VectorXd midpoint =
+        0.5 * (result->velocities.at(i) + result->velocities.at(i + 1));
+    max_error = std::max(max_error, (finite_difference - midpoint).cwiseAbs().maxCoeff());
+  }
+  EXPECT_LT(max_error, 1.0e-2);
 }
 
 }  // namespace roboplan
