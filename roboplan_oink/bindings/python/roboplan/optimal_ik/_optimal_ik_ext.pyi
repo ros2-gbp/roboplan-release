@@ -31,10 +31,19 @@ class Task:
     def num_variables(self) -> int:
         """Number of optimization variables."""
 
+    @property
+    def singularity_threshold(self) -> float:
+        """
+        Singular values of the weighted Jacobian below this are damped (0 = off).
+        """
+
+    @singularity_threshold.setter
+    def singularity_threshold(self, arg: float, /) -> None: ...
+
 class FrameTaskOptions:
     """Parameters for FrameTask."""
 
-    def __init__(self, position_cost: float = 1.0, orientation_cost: float = 1.0, task_gain: float = 1.0, lm_damping: float = 0.0, max_position_error: float = float('inf'), max_rotation_error: float = float('inf'), priority: int = 1) -> None:
+    def __init__(self, position_cost: float = 1.0, orientation_cost: float = 1.0, task_gain: float = 1.0, lm_damping: float = 0.0, position_saturation: float = float('inf'), orientation_saturation: float = float('inf'), position_tolerance: float = 0.001, orientation_tolerance: float = 0.001, priority: int = 1) -> None:
         """Constructor with custom parameters."""
 
     @property
@@ -66,18 +75,38 @@ class FrameTaskOptions:
     def lm_damping(self, arg: float, /) -> None: ...
 
     @property
-    def max_position_error(self) -> float:
-        """Maximum position error magnitude (meters). Infinite = no limit."""
+    def position_saturation(self) -> float:
+        """Per-step cap on the position error norm (meters). Infinite = no cap."""
 
-    @max_position_error.setter
-    def max_position_error(self, arg: float, /) -> None: ...
+    @position_saturation.setter
+    def position_saturation(self, arg: float, /) -> None: ...
 
     @property
-    def max_rotation_error(self) -> float:
-        """Maximum rotation error magnitude (radians). Infinite = no limit."""
+    def orientation_saturation(self) -> float:
+        """
+        Per-step cap on the orientation error norm (radians). Infinite = no cap.
+        """
 
-    @max_rotation_error.setter
-    def max_rotation_error(self, arg: float, /) -> None: ...
+    @orientation_saturation.setter
+    def orientation_saturation(self, arg: float, /) -> None: ...
+
+    @property
+    def position_tolerance(self) -> float:
+        """
+        Position error norm (meters) within which solveIterativeIk() treats the task as reached.
+        """
+
+    @position_tolerance.setter
+    def position_tolerance(self, arg: float, /) -> None: ...
+
+    @property
+    def orientation_tolerance(self) -> float:
+        """
+        Orientation error norm (radians) within which solveIterativeIk() treats the task as reached.
+        """
+
+    @orientation_tolerance.setter
+    def orientation_tolerance(self, arg: float, /) -> None: ...
 
     @property
     def priority(self) -> int:
@@ -110,12 +139,12 @@ class FrameTask(Task):
         """Target pose for the frame."""
 
     @property
-    def max_position_error(self) -> float:
-        """Maximum position error magnitude (meters)."""
+    def position_saturation(self) -> float:
+        """Per-step cap on the position error norm (meters)."""
 
     @property
-    def max_rotation_error(self) -> float:
-        """Maximum rotation error magnitude (radians)."""
+    def orientation_saturation(self) -> float:
+        """Per-step cap on the orientation error norm (radians)."""
 
     def setTargetFrameTransform(self, tform: Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')]) -> None:
         """Sets the target transform for this frame task."""
@@ -123,7 +152,7 @@ class FrameTask(Task):
 class ConfigurationTaskOptions:
     """Parameters for ConfigurationTask."""
 
-    def __init__(self, task_gain: float = 1.0, lm_damping: float = 0.0, priority: int = 1) -> None: ...
+    def __init__(self, task_gain: float = 1.0, lm_damping: float = 0.0, tolerance: float = 0.001, priority: int = 1) -> None: ...
 
     @property
     def task_gain(self) -> float:
@@ -138,6 +167,15 @@ class ConfigurationTaskOptions:
 
     @lm_damping.setter
     def lm_damping(self, arg: float, /) -> None: ...
+
+    @property
+    def tolerance(self) -> float:
+        """
+        Joint error norm (radians) within which solveIterativeIk() treats the task as reached.
+        """
+
+    @tolerance.setter
+    def tolerance(self, arg: float, /) -> None: ...
 
     @property
     def priority(self) -> int:
@@ -178,7 +216,23 @@ class Constraints:
 class PositionLimit(Constraints):
     """Constraint to enforce joint position limits."""
 
-    def __init__(self, oink: Oink, gain: float = 1.0) -> None: ...
+    def __init__(self, oink: Oink, gain: float = 1.0, joint_lower_limits: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')] = ..., joint_upper_limits: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')] = ..., max_pullback: float = 0.0) -> None:
+        """
+        Create a position limit constraint.
+
+        Args:
+            oink: The Oink solver this constraint will be used with.
+            gain: Scaling factor for how aggressively to steer away from limits.
+            joint_lower_limits: Lower limits in group joint order (size num_variables).
+                If empty, the scene model's joint limits are used.
+            joint_upper_limits: Upper limits in group joint order (size num_variables).
+                If empty, the scene model's joint limits are used.
+            max_pullback: Maximum amount per step a joint outside the limits is pulled
+                back inside them (scaled by gain). 0 keeps joints outside the limits
+                from moving further out, without pulling them back. solveIterativeIk()
+                only accepts solutions within the limits, so set this above 0 whenever
+                the start, or a random restart, may be outside them.
+        """
 
     @property
     def config_limit_gain(self) -> float:
@@ -186,6 +240,13 @@ class PositionLimit(Constraints):
 
     @config_limit_gain.setter
     def config_limit_gain(self, arg: float, /) -> None: ...
+
+    @property
+    def max_pullback(self) -> float:
+        """Maximum per-step pullback for joints outside the limits."""
+
+    @max_pullback.setter
+    def max_pullback(self, arg: float, /) -> None: ...
 
 class VelocityLimit(Constraints):
     """Constraint to enforce joint velocity limits."""
@@ -270,17 +331,79 @@ class AccelerationLimit(Constraints):
         """
 
     @delta_q_target.setter
-    def delta_q_target(self, arg: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')] | None) -> None: ...
+    def delta_q_target(self, arg: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')] | None, /) -> None: ...
+
+class RelativePoseConstraint(Constraints):
+    """
+    Constraint that keeps the pose of frame_b relative to frame_a within a per-axis
+    position/orientation tolerance of target_pose (tolerances are in the target frame).
+    """
+
+    def __init__(self, oink: Oink, scene: roboplan.core._core_ext.Scene, frame_a: str, frame_b: str, target_pose: Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')], gain: float = 1.0, position_tolerance: Annotated[NDArray[numpy.float64], dict(shape=(3), order='C')] = ..., orientation_tolerance: Annotated[NDArray[numpy.float64], dict(shape=(3), order='C')] = ...) -> None:
+        """
+        Create a relative pose constraint.
+
+        Args:
+            oink: The Oink solver this constraint will be used with.
+            scene: The scene used to resolve the frame IDs.
+            frame_a: Name of the reference frame.
+            frame_b: Name of the constrained frame.
+            target_pose: Target pose of frame_b in frame_a (4x4).
+            gain: Fraction of the excess error to remove per step (0 < gain <= 1).
+            position_tolerance: Per-axis position tolerance (meters), in the target frame.
+            orientation_tolerance: Per-axis orientation tolerance (radians), in the target
+                frame. Use an infinite tolerance to leave an axis free.
+        """
+
+    @property
+    def frame_a(self) -> str:
+        """Reference frame name."""
+
+    @property
+    def frame_b(self) -> str:
+        """Constrained frame name."""
+
+    @property
+    def target_pose(self) -> Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')]:
+        """Target pose of frame_b in frame_a (4x4)."""
+
+    @target_pose.setter
+    def target_pose(self, arg: Annotated[NDArray[numpy.float64], dict(shape=(4, 4), order='F')], /) -> None: ...
+
+    @property
+    def gain(self) -> float:
+        """Fraction of the excess error to remove per step (0 < gain <= 1)."""
+
+    @gain.setter
+    def gain(self, arg: float, /) -> None: ...
+
+    @property
+    def position_tolerance(self) -> Annotated[NDArray[numpy.float64], dict(shape=(3), order='C')]:
+        """Per-axis position tolerance (meters)."""
+
+    @position_tolerance.setter
+    def position_tolerance(self, arg: Annotated[NDArray[numpy.float64], dict(shape=(3), order='C')], /) -> None: ...
+
+    @property
+    def orientation_tolerance(self) -> Annotated[NDArray[numpy.float64], dict(shape=(3), order='C')]:
+        """Per-axis orientation tolerance (radians)."""
+
+    @orientation_tolerance.setter
+    def orientation_tolerance(self, arg: Annotated[NDArray[numpy.float64], dict(shape=(3), order='C')], /) -> None: ...
 
 class Barrier:
     """Abstract base class for Control Barrier Functions."""
 
-    def getNumBarriers(self, scene: roboplan.core._core_ext.SceneContext) -> int:
+    def getNumBarriers(self, context: roboplan.core._core_ext.SceneContext) -> int:
         """Get the number of barrier constraints."""
 
     @property
     def gain(self) -> float:
         """Barrier gain (gamma)."""
+
+    @property
+    def barrier_values(self) -> Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]:
+        """h(q) values from the last evaluation."""
 
     @property
     def dt(self) -> float:
@@ -329,7 +452,7 @@ class PositionBarrier(Barrier):
     def __init__(self, oink: Oink, scene: roboplan.core._core_ext.Scene, frame_name: str, p_min: Annotated[NDArray[numpy.float64], dict(shape=(3), order='C')], p_max: Annotated[NDArray[numpy.float64], dict(shape=(3), order='C')], dt: float, axis_selection: ConstraintAxisSelection = ..., gain: float = 1.0, safe_displacement_gain: float = 1.0, safety_margin: float = 0.0) -> None:
         """Create a position barrier with optional axis selection."""
 
-    def getFramePosition(self, scene: roboplan.core._core_ext.SceneContext) -> Annotated[NDArray[numpy.float64], dict(shape=(3), order='C')]:
+    def getFramePosition(self, context: roboplan.core._core_ext.SceneContext) -> Annotated[NDArray[numpy.float64], dict(shape=(3), order='C')]:
         """Get the current frame position in world coordinates."""
 
     @property
@@ -400,7 +523,7 @@ class SelfCollisionBarrierOptions:
         """
 
     @d_max.setter
-    def d_max(self, arg: float | None) -> None: ...
+    def d_max(self, arg: float | None, /) -> None: ...
 
 class SelfCollisionBarrier(Barrier):
     """
@@ -428,6 +551,10 @@ class SelfCollisionBarrier(Barrier):
         """
         Maximum distance (meters) at which a collision pair is tracked; pairs whose bounding boxes are farther apart than this skip exact narrow-phase distance. None disables culling.
         """
+
+    @property
+    def closest_pair_indices(self) -> list[int]:
+        """Collision pair indices constrained in the last evaluation."""
 
 class OinkSettings:
     """Solver settings for the Oink QP (ProxQP)."""
@@ -484,6 +611,82 @@ class OinkSettings:
     @primal_infeasibility_solving.setter
     def primal_infeasibility_solving(self, arg: bool, /) -> None: ...
 
+class IterativeSolveOptions:
+    """Options for Oink.solveIterativeIk()."""
+
+    def __init__(self) -> None: ...
+
+    @property
+    def max_iters(self) -> int:
+        """Max iterations for one try of the solver."""
+
+    @max_iters.setter
+    def max_iters(self, arg: int, /) -> None: ...
+
+    @property
+    def max_time(self) -> float:
+        """Max total computation time, in seconds."""
+
+    @max_time.setter
+    def max_time(self, arg: float, /) -> None: ...
+
+    @property
+    def max_restarts(self) -> int:
+        """Maximum number of random restarts until success."""
+
+    @max_restarts.setter
+    def max_restarts(self, arg: int, /) -> None: ...
+
+    @property
+    def stagnation_improvement(self) -> float:
+        """
+        An iteration counts as stagnant unless it shrinks the error to below this fraction of the best so far.
+        """
+
+    @stagnation_improvement.setter
+    def stagnation_improvement(self, arg: float, /) -> None: ...
+
+    @property
+    def max_stagnant_iters(self) -> int:
+        """
+        Consecutive stagnant iterations after which an attempt gives up and restarts.
+        """
+
+    @max_stagnant_iters.setter
+    def max_stagnant_iters(self, arg: int, /) -> None: ...
+
+    @property
+    def max_constraint_violation_norm(self) -> float:
+        """The maximum norm of any constraint violation at the solution."""
+
+    @max_constraint_violation_norm.setter
+    def max_constraint_violation_norm(self, arg: float, /) -> None: ...
+
+    @property
+    def regularization(self) -> float:
+        """Tikhonov regularization weight passed to each solveIk() step."""
+
+    @regularization.setter
+    def regularization(self, arg: float, /) -> None: ...
+
+    @property
+    def check_collisions(self) -> bool:
+        """
+        Whether to also require the solution to be collision-free over every collision pair.
+        """
+
+    @check_collisions.setter
+    def check_collisions(self, arg: bool, /) -> None: ...
+
+    @property
+    def fast_return(self) -> bool:
+        """
+        If true, returns the first configuration within the tolerances; otherwise keeps iterating while the error still improves.
+        """
+
+    @fast_return.setter
+    def fast_return(self, arg: bool, /) -> None: ...
+
 class Oink:
     """Optimal Inverse Kinematics solver."""
 
@@ -506,7 +709,7 @@ class Oink:
     @property
     def settings(self) -> OinkSettings:
         """
-        QP solver settings. Changes take effect the next time the solver is rebuilt (i.e., when the constraint dimensions change).
+        QP solver settings. warm_start applies on every solve; the rest take effect when a priority level's solver is rebuilt (i.e., when its QP dimensions change).
         """
 
     @settings.setter
@@ -515,6 +718,10 @@ class Oink:
     @property
     def num_variables(self) -> int:
         """Number of optimization variables."""
+
+    @property
+    def joint_names(self) -> list[str]:
+        """Names of the joints in the joint group."""
 
     @property
     def q_indices(self) -> Annotated[NDArray[numpy.int32], dict(shape=(None,), order='C')]:
@@ -529,8 +736,9 @@ class Oink:
         """
         Solve inverse kinematics for tasks, constraints, and barriers.
 
-        Solves a QP minimizing weighted task errors subject to the constraints and
-        barriers, writing the result into delta_q.
+        Solves one QP per task priority level, highest first, each restricted to the
+        nullspace of the levels above, minimizing weighted task errors subject to the
+        constraints and barriers. Writes the result into delta_q.
 
         Args:
             tasks: List of weighted tasks to optimize for.
@@ -621,6 +829,19 @@ class Oink:
             constraints: List of constraints to satisfy.
             delta_q: Pre-allocated numpy array for output (size = num_variables).
             regularization: Tikhonov regularization weight (default: 1e-12).
+        """
+
+    def solveIterativeIk(self, q_start: Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')], goal_tasks: Sequence[Task], extra_tasks: Sequence[Task] = [], constraints: Sequence[Constraints] = [], barriers: Sequence[Barrier] = [], options: IterativeSolveOptions = ...) -> Annotated[NDArray[numpy.float64], dict(shape=(None,), order='C')]:
+        """
+        Iterates solveIk() from q_start until every goal task is reached, with random restarts. Returns the full configuration; raises RuntimeError on failure.
+        """
+
+    def refreshContext(self) -> None:
+        """Re-snapshots the solver's collision context from its scene."""
+
+    def setRngSeed(self, seed: int) -> None:
+        """
+        Sets the seed for the random number generator (RNG)  for random restarts.
         """
 
     @overload

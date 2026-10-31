@@ -3,7 +3,10 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
+#include <vector>
 
+#include <Eigen/Eigenvalues>
 #include <tl/expected.hpp>
 
 #include <roboplan/core/scene.hpp>
@@ -17,6 +20,40 @@ namespace roboplan {
 
 /// @brief Infinity value used for unbounded QP constraint bounds.
 constexpr double kInfinity = std::numeric_limits<double>::infinity();
+
+/// @brief Options for Oink::solveIterativeIk().
+struct IterativeSolveOptions {
+  /// @brief Max iterations for one try of the solver.
+  size_t max_iters = 100;
+
+  /// @brief Max total computation time, in seconds.
+  double max_time = 0.05;
+
+  /// @brief Maximum number of random restarts until success.
+  size_t max_restarts = 2;
+
+  /// @brief An iteration counts as stagnant unless it shrinks the error to below this fraction of
+  /// the best so far.
+  double stagnation_improvement = 0.99;
+
+  /// @brief Consecutive stagnant iterations after which an attempt gives up and restarts.
+  size_t max_stagnant_iters = 5;
+
+  /// @brief The maximum norm of any Constraints::computeViolation() at the solution.
+  double max_constraint_violation_norm = 1e-4;
+
+  /// @brief Tikhonov regularization weight passed to each solveIk() step.
+  double regularization = 1e-12;
+
+  /// @brief Whether to also require the solution to be collision-free over every collision pair.
+  /// @details A SelfCollisionBarrier only evaluates its closest pairs, so this is the full check.
+  bool check_collisions = false;
+
+  /// @brief If true, returns the first configuration within the tolerances.
+  /// @details Otherwise keeps iterating while the error still improves, so the result is as
+  /// accurate as the solver can make it.
+  bool fast_return = true;
+};
 
 /// @brief Abstract base class for IK tasks.
 ///
@@ -43,6 +80,8 @@ struct Task {
     jacobian_container = Eigen::MatrixXd::Zero(task_rows, num_vars);
     error_container = Eigen::VectorXd::Zero(task_rows);
     H_dense = Eigen::MatrixXd::Zero(num_vars, num_vars);
+    weighted_jacobian = Eigen::MatrixXd::Zero(task_rows, num_vars);
+    weighted_error = Eigen::VectorXd::Zero(task_rows);
   }
 
   /// @brief Compute the task Jacobian and store in jacobian_container.
@@ -54,6 +93,10 @@ struct Task {
   /// @param context The context supplying the configuration and the frame placements to read.
   /// @return void on success, error message on failure.
   virtual tl::expected<void, std::string> computeError(const SceneContext& context) = 0;
+
+  /// @brief The error from the last computeError() relative to this task's own tolerance, so a
+  /// value of at most 1 means the task is reached. Used by Oink::solveIterativeIk().
+  virtual double normalizedError() const = 0;
 
   /// @brief Compute QP objective matrices (H, c) for this task.
   ///
@@ -89,11 +132,21 @@ struct Task {
                                   // into the nullspace of higher ones)
   int num_variables = 0;          // Number of optimization variables
 
+  /// @brief Singular values of the weighted Jacobian below this are damped: the corresponding
+  /// Hessian eigenvalues are floored at threshold², so the step gain in a near-singular direction
+  /// never exceeds 1/threshold. Lower priority levels may use those directions, at a cost of
+  /// ‖W J Δq‖²/threshold². 0 disables both.
+  double singularity_threshold = 0.0;
+
   /// @brief Pre-allocated Jacobian container (task_rows × num_variables).
   Eigen::MatrixXd jacobian_container;
 
   /// @brief Pre-allocated error container (task_rows).
   Eigen::VectorXd error_container;
+
+  /// @brief Pre-allocated W·J (task_rows × num_variables) and W·(α·e) (task_rows).
+  Eigen::MatrixXd weighted_jacobian;
+  Eigen::VectorXd weighted_error;
 
   /// @brief Pre-allocated dense Hessian matrix (num_variables × num_variables).
   Eigen::MatrixXd H_dense;
@@ -121,6 +174,14 @@ struct Constraints {
   computeQpConstraints(const SceneContext& context, Eigen::Ref<Eigen::MatrixXd> constraint_matrix,
                        Eigen::Ref<Eigen::VectorXd> lower_bounds,
                        Eigen::Ref<Eigen::VectorXd> upper_bounds) const = 0;
+
+  /// @brief Per-row violation of the constraint at the context's configuration: how far each row
+  /// lies outside its bounds, zero when satisfied.
+  /// @details Per-step constraints (e.g. velocity limits) hold by construction after a step
+  /// is integrated, so the default returns an empty vector.
+  virtual Eigen::VectorXd computeViolation(const SceneContext& /*context*/) const {
+    return Eigen::VectorXd();
+  }
 };
 
 /// @brief Abstract base class for Control Barrier Functions
@@ -327,7 +388,8 @@ struct Oink {
 
   /// @brief Solve inverse kinematics for tasks with constraints and barriers.
   ///
-  /// Solves a QP to compute the joint displacement that minimizes weighted task errors while
+  /// Solves one QP per task priority level, highest first, each restricted to the nullspace of the
+  /// levels above, to compute the joint displacement that minimizes weighted task errors while
   /// satisfying all constraints and barrier functions.
   ///
   /// @param scene The scene; the solve runs at its current joint positions
@@ -371,6 +433,30 @@ struct Oink {
           const std::vector<std::shared_ptr<Barrier>>& barriers,
           Eigen::Ref<Eigen::VectorXd, 0, Eigen::InnerStride<Eigen::Dynamic>> delta_q,
           double regularization = 1e-12);
+
+  /// @brief Iterates solveIk() from `q_start` until every goal task is reached.
+  /// @details Repeats solveIk -> integrate -> clamp until every goal task is within its own
+  /// tolerance (Task::normalizedError), every constraint violation is within tolerance, and every
+  /// barrier is non-negative at the result. When the error stops improving short of that, it
+  /// restarts from a random configuration of the joint group; hard constraints such as
+  /// RelativePoseConstraint pull the random seed back onto their manifold as the iteration
+  /// proceeds. Collision avoidance is opt-in through a SelfCollisionBarrier. The restarts are drawn
+  /// from the RNG seeded by setRngSeed().
+  /// @param q_start The configuration to start from (size model.nq).
+  /// @param goal_tasks The tasks whose targets must be reached.
+  /// @param extra_tasks Tasks solved alongside the goals but not required to converge (e.g. a
+  ///        nullspace ConfigurationTask).
+  /// @param constraints Constraints applied at every step and checked at the solution.
+  /// @param barriers Barriers applied at every step and checked at the solution.
+  /// @param options Iteration, tolerance, and restart options.
+  /// @return The configuration reaching the goals (size model.nq), else an error message.
+  tl::expected<Eigen::VectorXd, std::string>
+  solveIterativeIk(const Eigen::VectorXd& q_start,
+                   const std::vector<std::shared_ptr<Task>>& goal_tasks,
+                   const std::vector<std::shared_ptr<Task>>& extra_tasks,
+                   const std::vector<std::shared_ptr<Constraints>>& constraints,
+                   const std::vector<std::shared_ptr<Barrier>>& barriers,
+                   const IterativeSolveOptions& options = {});
 
   /// @brief Validate delta_q against barriers using forward kinematics.
   ///
@@ -417,16 +503,19 @@ struct Oink {
   /// mismatch rather than answer against geometry it was not sized for).
   const SceneContext& getContext() const { return *context_; }
 
-  /// @brief Re-snapshots the solver's context from `scene`, picking up its current collision
-  /// geometry.
+  /// @brief Sets the seed for the random number generator (RNG) for random restarts.
+  /// @param seed The seed to set.
+  void setRngSeed(unsigned int seed) { context_->setRngSeed(seed); }
+
+  /// @brief Re-snapshots the solver's context from the scene it was built from, picking up that
+  /// scene's current collision geometry.
   /// @details Call this after adding or removing geometry, or changing collision pairs, instead of
   /// rebuilding the solver. Tasks, constraints, and barriers attached to this solver resolve the
   /// context through the solver on each use, so they follow the new one; any that additionally
   /// size buffers from the collision geometry re-derive them on their next evaluation.
   /// @note The previous context is destroyed, so nothing may hold a reference to it across this
   /// call. Not safe to call while another thread is solving on this Oink.
-  /// @param scene The scene to snapshot. Normally the same scene the solver was built from.
-  void refreshContext(const Scene& scene);
+  void refreshContext();
 
   /// @brief Mutable access to the solver's context, for posing it at a configuration.
   /// @details solveIk() does this itself. Use this only to drive the pieces of a solve by hand
@@ -434,28 +523,37 @@ struct Oink {
   SceneContext& getContext() { return *context_; }
 
 private:
-  /// @brief Compute `task`'s Jacobian and error, and add its contribution to the QP Hessian
-  /// and gradient (projecting through the current `nullspace_projector` for hierarchical
-  /// priorities).
+  /// @brief Compute `task`'s Jacobian and error, and add its contribution to a QP objective.
   /// @param context The context supplying the configuration and the scratch.
   /// @param task The task to add to the QP objective.
+  /// @param H_out Hessian the task's JᵀJ (plus its damping) is added to.
+  /// @param c_out Gradient the task's Jᵀe term is added to.
   /// @return void if successful, else an error message describing the failure.
-  tl::expected<void, std::string> addTaskContribution(const SceneContext& context, Task* task);
-
-  /// @brief Rebuild `nullspace_projector` from the current `jacobian_stack` via a damped
-  /// pseudoinverse, so subsequent priority levels are projected into the nullspace of
-  /// everything stacked so far.
-  /// @param lambda_sq Damping factor for the pseudoinverse.
-  void rebuildNullspaceProjector(double lambda_sq);
+  tl::expected<void, std::string> addTaskContribution(const SceneContext& context, Task* task,
+                                                      Eigen::MatrixXd& H_out,
+                                                      Eigen::VectorXd& c_out);
 
 public:
-  // QP solver (ProxQP dense backend). Reconstructed whenever the constraint row count
-  // changes, since ProxQP fixes the problem dimensions at construction.
-  detail::QpSolverPtr solver;
+  // Per-priority-level state. ProxQP fixes the problem dimensions at construction, so each level
+  // keeps its own solver, rebuilt only when its (variables, rows) change. The scratch holds the
+  // nullspace basis Z entering the level, its QP in z (δq = δq_{k-1} + Z·z) with warm start, the
+  // stacked weighted Jacobian W·J of its tasks, and the δq it produced on the previous solve.
+  // Sizes are stable across solves, so the steady state allocates nothing.
+  struct Level {
+    detail::QpSolverPtr solver;
+    std::pair<int, int> dims{-1, -1};
+    Eigen::MatrixXd basis, H, HZ, A, jacobian, JZ, gram;
+    Eigen::VectorXd c, offset, lower, upper, z, guess, solution;
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig;
+  };
+  std::vector<Level> levels;
   OinkSettings settings;
 
   // Problem dimensions
   int num_variables;
+
+  /// @brief Names of the joints in the joint group.
+  std::vector<std::string> joint_names;
 
   /// @brief Position indices of the joint group (used to scatter group q into model.nq space).
   Eigen::VectorXi q_indices;
@@ -463,9 +561,12 @@ public:
   /// @brief Velocity indices of the joint group (used to scatter delta_q back into model.nv space).
   Eigen::VectorXi v_indices;
 
-  // Pre-allocated accumulated QP matrices
+  // Pre-allocated QP objective of the current priority level, and the regularization and barrier
+  // terms shared by all levels.
   Eigen::MatrixXd H;
   Eigen::VectorXd c;
+  Eigen::MatrixXd H_base;
+  Eigen::VectorXd c_base;
 
   // Pre-allocated constraint matrices
   Eigen::MatrixXd constraint_workspace_A;
@@ -482,17 +583,15 @@ public:
   Eigen::MatrixXd barrier_H_contribution;
   Eigen::VectorXd barrier_c_contribution;
 
-  // Cumulative unweighted Jacobian stack of the priority levels processed so far, and the
-  // nullspace projector N built from it (damped pseudoinverse), which projects the NEXT
-  // priority level's Jacobian into the higher levels' nullspace.
-  Eigen::MatrixXd jacobian_stack;
-  Eigen::MatrixXd nullspace_projector;
+  // Nullspace cascade scratch: the previous level's solution and the soft nullspace penalty,
+  // Σ ρ·JᵀJ of the levels solved so far and the matching -ρ·JᵀJ·Δq* linear terms.
+  Eigen::VectorXd previous_delta_q;
+  Eigen::MatrixXd nullspace_penalty_H;
+  Eigen::VectorXd nullspace_penalty_c;
 
-  // Per-task scratch: W·J·N and W·(α·e). Resized per task (dims depend on task rows); steady-state
-  // calls reuse the existing allocation when sizes match across iterations and across solveIk
-  // calls.
-  Eigen::MatrixXd projected_weighted_jacobian;
-  Eigen::VectorXd weighted_error;
+  // Selective singularity damping scratch for addTaskContribution(): the eigensolver and V·D.
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> task_eig;
+  Eigen::MatrixXd task_VD;
 
   // Pre-allocated, priority-sorted view into the tasks passed to solveIk. Reusing this buffer
   // avoids heap traffic on the hot path; capacity persists across calls.

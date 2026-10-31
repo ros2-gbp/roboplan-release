@@ -193,6 +193,18 @@ public:
   /// @return The random positions, if successful, else std::nullopt.
   std::optional<Eigen::VectorXd> randomCollisionFreePositions(size_t max_samples = 1000);
 
+  /// @brief Generates random collision-free positions for a subset of the joints.
+  /// @details Only the degrees of freedom belonging to `joint_names` are sampled; all other
+  /// entries are taken from `q_reference`. This is useful when an algorithm can only move a
+  /// planning group, so joints outside of it must keep their current values.
+  /// @param joint_names The names of the joints to randomize.
+  /// @param q_reference The full configuration supplying the joints that are not randomized.
+  /// @param max_samples The maximum number of samples to attempt.
+  /// @return The random positions, if successful, else std::nullopt.
+  std::optional<Eigen::VectorXd>
+  randomCollisionFreePositions(const std::vector<std::string>& joint_names,
+                               const Eigen::VectorXd& q_reference, size_t max_samples = 1000);
+
   /// @brief Checks collisions at specified joint positions.
   /// @param q The joint positions.
   /// @param debug If true, prints every colliding pair instead of stopping at the first collision.
@@ -422,7 +434,14 @@ public:
   /// @brief Get the joint position indices for a set of joint names.
   /// @param joint_names The joint names for which to look up position indices.
   /// @return The corresponding joint position indices.
+  /// @throws std::invalid_argument if a name is not a joint in the model.
   Eigen::VectorXi getJointPositionIndices(const std::vector<std::string>& joint_names) const;
+
+  /// @brief Get the joint velocity indices for a set of joint names.
+  /// @param joint_names The joint names for which to look up velocity indices.
+  /// @return The corresponding joint velocity indices.
+  /// @throws std::invalid_argument if a name is not a joint in the model.
+  Eigen::VectorXi getJointVelocityIndices(const std::vector<std::string>& joint_names) const;
 
   /// @brief Get the joint position limit vectors for a specified group.
   /// @param group_name The name of the group. Defaults to the complete robot model.
@@ -517,6 +536,7 @@ public:
   tl::expected<void, std::string> addGeometry(const pinocchio::GeometryObject& geom_obj);
 
   /// @brief Updates the placement of an object geometry in the scene.
+  /// @details Fails if the object is attached; use `reparentAttachedObject` instead.
   /// @param name The name of the object to update.
   /// @param parent_frame The parent frame of the transformation.
   /// @param tform The transform between the parent frame and the geometry.
@@ -525,8 +545,58 @@ public:
                                                           Eigen::Matrix4d& tform);
 
   /// @brief Removes a geometry from the scene.
+  /// @details Fails if the object is attached; call `detachObject` first.
   /// @param name The name of the object to remove.
   tl::expected<void, std::string> removeGeometry(const std::string& name);
+
+  /// @brief Attaches an object in the scene to a parent frame.
+  /// @details Disables collisions between the object and all geometry objects attached to the
+  ///          parent frame, as well as the object and all geometries or frames specified in
+  ///          `allowed_collision_bodies`.
+  /// Only pairs that were enabled beforehand are disabled, so `detachObject` restores exactly
+  /// those. If `tform` is not given, the object keeps its world pose at
+  /// `getCurrentJointPositions()`. This changes collision pairs, so it invalidates existing
+  /// SceneContexts.
+  /// @param object_name The name of the object to attach. Must not already be attached.
+  /// @param parent_frame The name of the frame to attach the object to.
+  /// @param allowed_collision_bodies Bodies besides the parent frame that the object may collide
+  /// with while attached.
+  /// @param tform The transform between the parent frame and the object.
+  /// @return Void if successful, else a string describing the error.
+  tl::expected<void, std::string>
+  attachObject(const std::string& object_name, const std::string& parent_frame,
+               const std::vector<std::string>& allowed_collision_bodies = {},
+               const std::optional<Eigen::Matrix4d>& tform = std::nullopt);
+
+  /// @brief Detaches an object from its parent frame, returning it to the world.
+  /// @details The object is reparented to the `universe` frame at its world pose at
+  /// `getCurrentJointPositions()`, and the collision pairs disabled by `attachObject` are
+  /// re-enabled. An object added onto a frame other than `universe` does not return to that frame.
+  /// This changes collision pairs, so it invalidates existing SceneContexts.
+  /// @param object_name The name of the attached object.
+  /// @return Void if successful, else a string describing the error.
+  tl::expected<void, std::string> detachObject(const std::string& object_name);
+
+  /// @brief Moves an attached object to a new parent frame, such as when handing it over.
+  /// @details Equivalent to `detachObject` followed by `attachObject`, but the object stays
+  /// attached throughout and collision data is rebuilt only once.
+  /// @param object_name The name of the attached object.
+  /// @param parent_frame The name of the frame to attach the object to.
+  /// @param allowed_collision_bodies Bodies besides the parent frame that the object may collide
+  /// with while attached.
+  /// @param tform The transform between the parent frame and the object.
+  /// @return Void if successful, else a string describing the error.
+  tl::expected<void, std::string>
+  reparentAttachedObject(const std::string& object_name, const std::string& parent_frame,
+                         const std::vector<std::string>& allowed_collision_bodies = {},
+                         const std::optional<Eigen::Matrix4d>& tform = std::nullopt);
+
+  /// @brief Checks whether an object is attached via `attachObject`.
+  /// @param object_name The name of the object.
+  /// @return True if the object is attached, else false.
+  bool isObjectAttached(const std::string& object_name) const {
+    return attached_object_pairs_.contains(object_name);
+  }
 
   /// @brief Gets a list of collision geometry IDs corresponding to a specified body.
   /// @details The body name can be a model frame name or the name of a geometry added to the scene.
@@ -575,6 +645,60 @@ public:
 
 private:
   void applyMimicJointLimits();
+
+  /// @brief Builds a geometry object attached to a named frame.
+  /// @param name The name of the object to add. Must be unique.
+  /// @param parent_frame The name of the parent frame to add the object to.
+  /// @param geom_ptr The collision geometry shape.
+  /// @param tform The transform between the parent frame and the geometry.
+  /// @param color The color of the geometry, in RGBA vector format.
+  /// @return The geometry object if successful, else a string describing the error.
+  tl::expected<pinocchio::GeometryObject, std::string>
+  makeGeometryObject(const std::string& name, const std::string& parent_frame,
+                     const std::shared_ptr<coal::CollisionGeometry>& geom_ptr,
+                     const Eigen::Matrix4d& tform, const Eigen::Vector4d& color) const;
+
+  /// @brief Resolves body name pairs to collision geometry index pairs, skipping self-pairs.
+  /// @param pairs Body name pairs. Names can be model frame names or names of added geometry.
+  /// @return The collision pairs if successful, else a string describing the error.
+  tl::expected<std::vector<pinocchio::CollisionPair>, std::string>
+  getCollisionPairs(const std::vector<std::pair<std::string, std::string>>& pairs);
+
+  /// @brief Enables or disables collision pairs in the collision model, without rebuilding data.
+  /// @param pairs The collision geometry index pairs to set.
+  /// @param enable If true, enables each pair; if false, disables each pair.
+  void setCollisionPairs(const std::vector<pinocchio::CollisionPair>& pairs, const bool enable);
+
+  /// @brief Reassigns collision_model_data_ and rebuilds the broadphase manager to match it.
+  void refreshCollisionData();
+
+  /// @brief Places a collision geometry relative to a frame.
+  /// @param geom_idx The collision geometry ID of the geometry to place.
+  /// @param frame_id The Pinocchio frame ID of the new parent frame.
+  /// @param frame_T_geom The transform between the parent frame and the geometry.
+  void placeGeometry(pinocchio::GeomIndex geom_idx, pinocchio::FrameIndex frame_id,
+                     const pinocchio::SE3& frame_T_geom);
+
+  /// @brief Gets the placement of a collision geometry relative to a frame at the current state.
+  /// @param geom_idx The collision geometry ID of the geometry.
+  /// @param frame_id The Pinocchio frame ID of the reference frame.
+  /// @return The transform between the frame and the geometry.
+  pinocchio::SE3 getGeometryPlacementInFrame(pinocchio::GeomIndex geom_idx,
+                                             pinocchio::FrameIndex frame_id) const;
+
+  /// @brief Shared implementation of attachObject and reparentAttachedObject.
+  /// @param object_name The name of the object to attach.
+  /// @param parent_frame The name of the frame to attach the object to.
+  /// @param allowed_collision_bodies Bodies besides the parent frame that the object may collide
+  /// with while attached.
+  /// @param tform The transform between the parent frame and the object. If not set, the object
+  /// keeps its current world pose.
+  /// @return Void if successful, else a string describing the error.
+  tl::expected<void, std::string>
+  setAttachment(const std::string& object_name, const std::string& parent_frame,
+                const std::vector<std::string>& allowed_collision_bodies,
+                const std::optional<Eigen::Matrix4d>& tform);
+
   /// @brief The name of the scene.
   std::string name_;
 
@@ -632,6 +756,11 @@ private:
 
   /// @brief Maps each added collision geometry to its respective Pinocchio geometry ID.
   std::unordered_map<std::string, pinocchio::GeomIndex> collision_geometry_map_;
+
+  /// @brief Maps each attached object to the collision pairs its attachment disabled.
+  /// @details Only pairs that were enabled at attach time are recorded, so detaching never enables
+  /// a pair that was disabled beforehand.
+  std::unordered_map<std::string, std::vector<pinocchio::CollisionPair>> attached_object_pairs_;
 
   /// @brief The collision geometry IDs of the robot itself (see getRobotCollisionGeometryIds).
   std::vector<pinocchio::GeomIndex> robot_collision_geometry_ids_;
