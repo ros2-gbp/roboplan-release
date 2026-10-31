@@ -3,23 +3,21 @@
 #include <memory>
 #include <optional>
 #include <random>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <dynotree/KDTree.h>
 #include <tl/expected.hpp>
 
+#include <roboplan/core/constraints.hpp>
 #include <roboplan/core/scene.hpp>
 #include <roboplan/core/scene_context.hpp>
 #include <roboplan/core/types.hpp>
-#include <roboplan_rrt/constraints.hpp>
 #include <roboplan_rrt/graph.hpp>
+#include <roboplan_rrt/kd_tree.hpp>
 
 namespace roboplan {
-
-using CombinedStateSpace = dynotree::Combined<double>;
-using KdTree = dynotree::KDTree<int, -1, 32, double, CombinedStateSpace>;
 
 /// @brief Options struct for RRT planner.
 struct RRTOptions {
@@ -27,6 +25,7 @@ struct RRTOptions {
   std::string group_name = "";
 
   /// @brief The maximum number of nodes to sample.
+  /// @details This includes the start and all goal configurations.
   size_t max_nodes = 1000;
 
   /// @brief The maximum configuration distance between two nodes.
@@ -54,8 +53,7 @@ struct RRTOptions {
   bool rrt_connect = false;
 
   /// @brief If true, use the RRT* algorithm to grow asymptotically optimal trees by rewiring.
-  /// @details Compatible with `rrt_connect`, in which case both trees are rewired. Worth enabling
-  /// with constraints, since path shortcutting would likely violate them.
+  /// @details Compatible with `rrt_connect`, in which case both trees are rewired.
   bool rrt_star = false;
 
   /// @brief The configuration-space radius used to find neighbors for RRT* rewiring.
@@ -71,9 +69,19 @@ struct RRTOptions {
   bool fast_return = true;
 
   /// @brief Options for the projection that pulls sampled configurations onto the constraints.
-  /// @details Only used when `plan` is given constraints. Its `path_step_size` is the distance the
-  /// tree grows between projections, and is the main tuning parameter for constrained planning.
+  /// @details Only used when `plan` or `planToAny` is given constraints. Its `path_step_size` is
+  /// the distance the tree grows between projections, and is the main tuning parameter for
+  /// constrained planning.
   ConstraintProjectorOptions constraint_projection = ConstraintProjectorOptions();
+};
+
+/// @brief The result of planning to one of a set of goals.
+struct RRTPlan {
+  /// @brief The joint-space path from the start to the reached goal.
+  JointPath path;
+
+  /// @brief The index of the goal the path ends at, in the order the goals were given.
+  size_t goal_index = 0;
 };
 
 /// @brief Motion planner based on the Rapidly-exploring Random Tree (RRT) algorithm.
@@ -86,7 +94,7 @@ public:
 
   /// @brief Sets or updates the options for the RRT planner.
   /// @details If the group name is different between the previous and incoming sets of
-  /// options, a new dynotree state space will be generated.
+  /// options, the k-d tree state space is rebuilt.
   /// @param options The new options for the planner.
   void setOptions(const RRTOptions& options);
 
@@ -101,19 +109,35 @@ public:
   plan(const JointConfiguration& start, const JointConfiguration& goal,
        const std::vector<std::shared_ptr<Constraint>>& constraints = {});
 
+  /// @brief Plan a path from start to one of a set of valid goal configurations.
+  /// @param start The starting joint configuration.
+  /// @param goals The set of goal joint configurations.
+  /// @param constraints Constraints that every configuration on the path must satisfy via
+  /// projection, which is the CBiRRT2 constrained extension (Berenson et al., 2009). The start and
+  /// all goals must already satisfy them. If empty (default), plans without constraints.
+  /// @details The path ends at whichever goal is reached first, or the cheapest one found if
+  /// fast_return is false. If any goal can be reached by a direct connection, the
+  /// closest such goal is returned immediately, regardless of fast_return.
+  /// @return The joint-space path from the start to one of the goal configurations, along with the
+  /// index of that goal, if planning succeeds, otherwise an error message.
+  tl::expected<RRTPlan, std::string>
+  planToAny(const JointConfiguration& start, std::span<const JointConfiguration> goals,
+            const std::vector<std::shared_ptr<Constraint>>& constraints = {});
+
   /// @brief Sets the seed for the random number generator (RNG).
   /// @details Each plan derives its sampling seed from this generator, so a fixed seed makes
   /// planning reproducible.
   /// @param seed The seed to set.
   void setRngSeed(unsigned int seed);
 
-  /// @brief Initializes the search tree with the specified start pose.
+  /// @brief Initializes the search tree with the specified list of start poses.
   /// @param tree Reference to an empty tree.
   /// @param nodes Reference to the nodes vector.
-  /// @param q_init The root configuration, as full (model-sized) joint positions.
+  /// @param q_inits The root configurations, as full (model-sized) joint positions. Each
+  /// configuration is an independent root.
   /// @param max_size The number of nodes to reserve space for.
-  void initializeTree(KdTree& tree, std::vector<Node>& nodes, const Eigen::VectorXd& q_init,
-                      size_t max_size = 1000);
+  void initializeTree(KdTree& tree, std::vector<Node>& nodes,
+                      std::span<const Eigen::VectorXd> q_inits, size_t max_size = 1000);
 
   /// @brief Attempt to add node(s) to the provided tree and node set, growing toward `q_sample`.
   /// @param tree The tree to grow.
@@ -222,14 +246,8 @@ private:
   /// @brief The joint group info for the IK solver.
   JointGroupInfo joint_group_info_;
 
-  /// @brief A state space for the k-d tree for nearest neighbor lookup.
-  CombinedStateSpace state_space_;
-
-  /// @brief The runtime dimension of the (collapsed) k-d tree state space.
-  /// @details Cached at construction because `CombinedStateSpace::get_runtime_dim()` is not
-  /// const-qualified in the vendored dynotree, so it cannot be called from the const
-  /// `findNearNodes` where the dimension is needed.
-  int state_dim_ = 0;
+  /// @brief Per collapsed k-d tree coordinate, true if it is an SO(2) angle that wraps around.
+  std::vector<bool> circular_dims_;
 
   /// @brief A random number generator for the planner.
   std::mt19937 rng_gen_;
