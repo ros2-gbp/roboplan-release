@@ -1,0 +1,12 @@
+Source: ros-rolling-roboplan
+Section: misc
+Priority: optional
+Maintainer: "Sebastian Castro" <sebas.a.castro@gmail.com>
+Build-Depends: debhelper (>= 9.0.0), ros-rolling-ament-cmake, ros-rolling-ros-workspace
+Homepage: https://roboplan.readthedocs.io
+Standards-Version: 3.9.2
+
+Package: ros-rolling-roboplan
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-rolling-roboplan-cartesian-planning, ros-rolling-roboplan-common, ros-rolling-roboplan-core, ros-rolling-roboplan-example-models, ros-rolling-roboplan-examples, ros-rolling-roboplan-oink, ros-rolling-roboplan-rrt, ros-rolling-roboplan-simple-ik, ros-rolling-roboplan-toppra, ros-rolling-ros-workspace
+Description: Metapackage for the RoboPlan motion-planning library.
