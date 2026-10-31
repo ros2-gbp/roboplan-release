@@ -1,8 +1,0 @@
-matplotlib
-mujoco
-numpy
-opencv-contrib-python-headless
-plyfile
-robot_descriptions
-tyro
-viser>=1.0.29
