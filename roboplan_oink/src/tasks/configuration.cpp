@@ -9,8 +9,8 @@ ConfigurationTask::ConfigurationTask(const Oink& oink, const Eigen::VectorXd& ta
                                      const ConfigurationTaskOptions& options)
     : Task(options.priority, createWeightMatrix(joint_weights), options.task_gain,
            options.lm_damping),
-      target_q(target_q), joint_weights(joint_weights), q_indices(oink.q_indices),
-      v_indices(oink.v_indices) {
+      target_q(target_q), joint_weights(joint_weights), tolerance(options.tolerance),
+      q_indices(oink.q_indices), v_indices(oink.v_indices) {
   if (joint_weights.size() != oink.num_variables) {
     throw std::invalid_argument(
         "ConfigurationTask: joint_weights size (" + std::to_string(joint_weights.size()) +
@@ -48,14 +48,24 @@ tl::expected<void, std::string> ConfigurationTask::computeError(const SceneConte
   }
 
   // Full-robot target: non-group joints stay at their current positions.
-  Eigen::VectorXd q_target_full = q;
-  q_target_full(q_indices) = target_q;
+  q_target_full = q;
+  for (Eigen::Index i = 0; i < q_indices.size(); ++i) {
+    q_target_full[q_indices[i]] = target_q[i];
+  }
 
   // Difference in the full tangent space, restricted to the group's velocity indices.
-  const Eigen::VectorXd full_diff = pinocchio::difference(model, q, q_target_full);
-  error_container = full_diff(v_indices);
+  full_diff.resize(model.nv);
+  pinocchio::difference(model, q, q_target_full, full_diff);
+  for (Eigen::Index i = 0; i < v_indices.size(); ++i) {
+    error_container[i] = full_diff[v_indices[i]];
+  }
 
   return {};
+}
+
+double ConfigurationTask::normalizedError() const {
+  // Joints with zero weight are not tracked, so they do not count against convergence.
+  return (joint_weights.array() > 0.0).select(error_container, 0.0).norm() / tolerance;
 }
 
 tl::expected<void, std::string>
