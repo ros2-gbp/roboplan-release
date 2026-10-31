@@ -4,7 +4,6 @@
 #include <stdexcept>
 #include <vector>
 
-#include <pinocchio/algorithm/kinematics.hpp>
 #include <roboplan/core/scene.hpp>
 #include <roboplan_example_models/resources.hpp>
 #include <roboplan_oink/constraints/position_limit.hpp>
@@ -39,15 +38,12 @@ int main(int /*argc*/, char* /*argv*/[]) {
   const auto goal = CartesianConfiguration{
       .base_frame = "base",
       .tip_frame = "tool0",
-      .tform = scene.forwardKinematics(q_tgt, "tool0"),
+      .tform = scene.forwardKinematics(q_tgt, "tool0", "base"),
   };
 
   // Set initial configuration
   auto q_start = pinocchio::neutral(model);
   scene.setJointPositions(q_start);
-
-  // Update forward kinematics in scene data
-  scene.forwardKinematics(q_start, "tool0");
 
   // Create Oink instance
   Oink oink(scene, "arm");
@@ -63,16 +59,15 @@ int main(int /*argc*/, char* /*argv*/[]) {
   auto frame_task = std::make_shared<FrameTask>(oink, scene, goal, frame_options);
 
   // Create a ConfigurationTask to regularize toward start configuration (low priority)
-  // Using lower joint_weights (0.1) makes this task less important than the frame task
   Eigen::VectorXd joint_weights = Eigen::VectorXd::Constant(num_variables, 0.1);
   ConfigurationTaskOptions config_options{
       .task_gain = 1.0,
       .lm_damping = 0.0,
+      .priority = 2,
   };
   auto config_task = std::make_shared<ConfigurationTask>(oink, q_start(oink.q_indices),
                                                          joint_weights, config_options);
 
-  // Add tasks to vector (frame task dominates due to higher weights)
   std::vector<std::shared_ptr<Task>> tasks = {frame_task, config_task};
 
   // Create position limit constraint

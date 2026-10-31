@@ -47,9 +47,9 @@ def round_corners(
 
     Corners whose arc would be shorter than `min_arc_length` meters are left sharp: such a
     sub-resolution arc turns within about one control step, spiking the joint acceleration and
-    forcing the Bounded planner to slow the whole motion, while a sharp corner is caught by its
-    corner-speed cap. Pass one control step of tool travel (max_linear_speed * dt) to snap
-    exactly the arcs the planner cannot resolve.
+    forcing the Bounded planner to slow down through it, while it simply stops at a sharp corner.
+    Pass one control step of tool travel (max_linear_speed * dt) to snap exactly the arcs the
+    planner cannot resolve.
     """
     if radius <= 0.0 or len(vertices) < 3:
         return vertices
@@ -150,8 +150,8 @@ def main(
     max_angular_speed: float = 0.5,
     max_linear_acceleration: float = 0.5,
     max_angular_acceleration: float = 2.5,
-    max_position_error: float = 0.005,
-    max_orientation_error: float = 0.05,
+    position_tolerance: float = 0.005,
+    orientation_tolerance: float = 0.05,
     velocity_scale: float = 1.0,
     acceleration_scale: float = 1.0,
     dt: float = 0.01,
@@ -176,8 +176,8 @@ def main(
             Bounded mode only.
         max_angular_acceleration: Maximum angular tool acceleration along the path (rad/s^2).
             Bounded mode only.
-        max_position_error: Maximum position deviation from the path (m).
-        max_orientation_error: Maximum orientation deviation from the path (rad).
+        position_tolerance: Maximum position deviation from the path (m).
+        orientation_tolerance: Maximum orientation deviation from the path (rad).
         velocity_scale: Scaling (0, 1] applied to joint velocity limits.
         acceleration_scale: Scaling (0, 1] applied to joint acceleration limits.
         dt: Output trajectory sample period (s).
@@ -236,8 +236,8 @@ def main(
         max_angular_speed=max_angular_speed,
         max_linear_acceleration=max_linear_acceleration,
         max_angular_acceleration=max_angular_acceleration,
-        max_position_error=max_position_error,
-        max_orientation_error=max_orientation_error,
+        position_tolerance=position_tolerance,
+        orientation_tolerance=orientation_tolerance,
         velocity_scale=velocity_scale,
         acceleration_scale=acceleration_scale,
         speed_mode=speed_mode,
