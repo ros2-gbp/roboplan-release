@@ -12,6 +12,7 @@
 #include <roboplan_oink/barriers/self_collision_barrier.hpp>
 #include <roboplan_oink/constraints/acceleration_limit.hpp>
 #include <roboplan_oink/constraints/position_limit.hpp>
+#include <roboplan_oink/constraints/relative_pose.hpp>
 #include <roboplan_oink/constraints/velocity_limit.hpp>
 #include <roboplan_oink/optimal_ik.hpp>
 #include <roboplan_oink/tasks/configuration.hpp>
@@ -32,22 +33,31 @@ void init_optimal_ik(nanobind::module_& m) {
       .def_ro("priority", &Task::priority,
               "Priority level (1 = highest; lower priorities are projected into the nullspace of "
               "higher priorities).")
-      .def_ro("num_variables", &Task::num_variables, "Number of optimization variables.");
+      .def_ro("num_variables", &Task::num_variables, "Number of optimization variables.")
+      .def_rw("singularity_threshold", &Task::singularity_threshold,
+              "Singular values of the weighted Jacobian below this are damped (0 = off).");
 
   nanobind::class_<FrameTaskOptions>(m, "FrameTaskOptions", "Parameters for FrameTask.")
-      .def(nanobind::init<double, double, double, double, double, double, int>(),
+      .def(nanobind::init<double, double, double, double, double, double, double, double, int>(),
            "position_cost"_a = 1.0, "orientation_cost"_a = 1.0, "task_gain"_a = 1.0,
-           "lm_damping"_a = 0.0, "max_position_error"_a = std::numeric_limits<double>::infinity(),
-           "max_rotation_error"_a = std::numeric_limits<double>::infinity(), "priority"_a = 1,
+           "lm_damping"_a = 0.0, "position_saturation"_a = std::numeric_limits<double>::infinity(),
+           "orientation_saturation"_a = std::numeric_limits<double>::infinity(),
+           "position_tolerance"_a = 0.001, "orientation_tolerance"_a = 0.001, "priority"_a = 1,
            "Constructor with custom parameters.")
       .def_rw("position_cost", &FrameTaskOptions::position_cost, "Position cost weight.")
       .def_rw("orientation_cost", &FrameTaskOptions::orientation_cost, "Orientation cost weight.")
       .def_rw("task_gain", &FrameTaskOptions::task_gain, "Task gain for low-pass filtering.")
       .def_rw("lm_damping", &FrameTaskOptions::lm_damping, "Levenberg-Marquardt damping.")
-      .def_rw("max_position_error", &FrameTaskOptions::max_position_error,
-              "Maximum position error magnitude (meters). Infinite = no limit.")
-      .def_rw("max_rotation_error", &FrameTaskOptions::max_rotation_error,
-              "Maximum rotation error magnitude (radians). Infinite = no limit.")
+      .def_rw("position_saturation", &FrameTaskOptions::position_saturation,
+              "Per-step cap on the position error norm (meters). Infinite = no cap.")
+      .def_rw("orientation_saturation", &FrameTaskOptions::orientation_saturation,
+              "Per-step cap on the orientation error norm (radians). Infinite = no cap.")
+      .def_rw("position_tolerance", &FrameTaskOptions::position_tolerance,
+              "Position error norm (meters) within which solveIterativeIk() treats the task as "
+              "reached.")
+      .def_rw("orientation_tolerance", &FrameTaskOptions::orientation_tolerance,
+              "Orientation error norm (radians) within which solveIterativeIk() treats the task "
+              "as reached.")
       .def_rw("priority", &FrameTaskOptions::priority,
               "Priority level (1 = highest). Tasks at higher priority numbers are projected "
               "into the nullspace of lower priority numbers. Must be >= 1.");
@@ -62,20 +72,23 @@ void init_optimal_ik(nanobind::module_& m) {
               "Index of the frame in the scene's Pinocchio model.")
       .def_ro("v_indices", &FrameTask::v_indices, "Velocity vector indices for the joint group.")
       .def_ro("target_pose", &FrameTask::target_pose, "Target pose for the frame.")
-      .def_ro("max_position_error", &FrameTask::max_position_error,
-              "Maximum position error magnitude (meters).")
-      .def_ro("max_rotation_error", &FrameTask::max_rotation_error,
-              "Maximum rotation error magnitude (radians).")
+      .def_ro("position_saturation", &FrameTask::position_saturation,
+              "Per-step cap on the position error norm (meters).")
+      .def_ro("orientation_saturation", &FrameTask::orientation_saturation,
+              "Per-step cap on the orientation error norm (radians).")
       .def("setTargetFrameTransform", &FrameTask::setTargetFrameTransform, "tform"_a,
            "Sets the target transform for this frame task.");
 
   nanobind::class_<ConfigurationTaskOptions>(m, "ConfigurationTaskOptions",
                                              "Parameters for ConfigurationTask.")
-      .def(nanobind::init<double, double, int>(), "task_gain"_a = 1.0, "lm_damping"_a = 0.0,
-           "priority"_a = 1)
+      .def(nanobind::init<double, double, double, int>(), "task_gain"_a = 1.0, "lm_damping"_a = 0.0,
+           "tolerance"_a = 0.001, "priority"_a = 1)
       .def_rw("task_gain", &ConfigurationTaskOptions::task_gain,
               "Task gain for low-pass filtering.")
       .def_rw("lm_damping", &ConfigurationTaskOptions::lm_damping, "Levenberg-Marquardt damping.")
+      .def_rw("tolerance", &ConfigurationTaskOptions::tolerance,
+              "Joint error norm (radians) within which solveIterativeIk() treats the task as "
+              "reached.")
       .def_rw("priority", &ConfigurationTaskOptions::priority,
               "Priority level (1 = highest). Tasks at higher priority numbers are projected "
               "into the nullspace of lower priority numbers. Must be >= 1.");
@@ -95,9 +108,27 @@ void init_optimal_ik(nanobind::module_& m) {
 
   nanobind::class_<PositionLimit, Constraints>(m, "PositionLimit",
                                                "Constraint to enforce joint position limits.")
-      .def(nanobind::init<const Oink&, double>(), "oink"_a, "gain"_a = 1.0)
+      .def(nanobind::init<const Oink&, double, const Eigen::VectorXd&, const Eigen::VectorXd&,
+                          double>(),
+           "oink"_a, "gain"_a = 1.0, "joint_lower_limits"_a = Eigen::VectorXd(),
+           "joint_upper_limits"_a = Eigen::VectorXd(), "max_pullback"_a = 0.0,
+           "Create a position limit constraint.\n\n"
+           "Args:\n"
+           "    oink: The Oink solver this constraint will be used with.\n"
+           "    gain: Scaling factor for how aggressively to steer away from limits.\n"
+           "    joint_lower_limits: Lower limits in group joint order (size num_variables).\n"
+           "        If empty, the scene model's joint limits are used.\n"
+           "    joint_upper_limits: Upper limits in group joint order (size num_variables).\n"
+           "        If empty, the scene model's joint limits are used.\n"
+           "    max_pullback: Maximum amount per step a joint outside the limits is pulled\n"
+           "        back inside them (scaled by gain). 0 keeps joints outside the limits\n"
+           "        from moving further out, without pulling them back. solveIterativeIk()\n"
+           "        only accepts solutions within the limits, so set this above 0 whenever\n"
+           "        the start, or a random restart, may be outside them.")
       .def_rw("config_limit_gain", &PositionLimit::config_limit_gain,
-              "Gain for position limit enforcement.");
+              "Gain for position limit enforcement.")
+      .def_rw("max_pullback", &PositionLimit::max_pullback,
+              "Maximum per-step pullback for joints outside the limits.");
 
   nanobind::class_<VelocityLimit, Constraints>(m, "VelocityLimit",
                                                "Constraint to enforce joint velocity limits.")
@@ -135,10 +166,43 @@ void init_optimal_ik(nanobind::module_& m) {
       .def_rw("delta_q_target", &AccelerationLimit::delta_q_target,
               "Remaining displacement to the task target, or None to disable target braking.");
 
+  nanobind::class_<RelativePoseConstraint, Constraints>(
+      m, "RelativePoseConstraint",
+      "Constraint that keeps the pose of frame_b relative to frame_a within a per-axis\n"
+      "position/orientation tolerance of target_pose (tolerances are in the target frame).")
+      .def(nanobind::init<const Oink&, const Scene&, const std::string&, const std::string&,
+                          const Eigen::Matrix4d&, double, const Eigen::Vector3d&,
+                          const Eigen::Vector3d&>(),
+           "oink"_a, "scene"_a, "frame_a"_a, "frame_b"_a, "target_pose"_a, "gain"_a = 1.0,
+           "position_tolerance"_a = Eigen::Vector3d::Zero(),
+           "orientation_tolerance"_a = Eigen::Vector3d::Zero(),
+           "Create a relative pose constraint.\n\n"
+           "Args:\n"
+           "    oink: The Oink solver this constraint will be used with.\n"
+           "    scene: The scene used to resolve the frame IDs.\n"
+           "    frame_a: Name of the reference frame.\n"
+           "    frame_b: Name of the constrained frame.\n"
+           "    target_pose: Target pose of frame_b in frame_a (4x4).\n"
+           "    gain: Fraction of the excess error to remove per step (0 < gain <= 1).\n"
+           "    position_tolerance: Per-axis position tolerance (meters), in the target frame.\n"
+           "    orientation_tolerance: Per-axis orientation tolerance (radians), in the target\n"
+           "        frame. Use an infinite tolerance to leave an axis free.")
+      .def_ro("frame_a", &RelativePoseConstraint::frame_a, "Reference frame name.")
+      .def_ro("frame_b", &RelativePoseConstraint::frame_b, "Constrained frame name.")
+      .def_rw("target_pose", &RelativePoseConstraint::target_pose,
+              "Target pose of frame_b in frame_a (4x4).")
+      .def_rw("gain", &RelativePoseConstraint::gain,
+              "Fraction of the excess error to remove per step (0 < gain <= 1).")
+      .def_rw("position_tolerance", &RelativePoseConstraint::position_tolerance,
+              "Per-axis position tolerance (meters).")
+      .def_rw("orientation_tolerance", &RelativePoseConstraint::orientation_tolerance,
+              "Per-axis orientation tolerance (radians).");
+
   nanobind::class_<Barrier>(m, "Barrier", "Abstract base class for Control Barrier Functions.")
-      .def("getNumBarriers", &Barrier::getNumBarriers, "scene"_a,
+      .def("getNumBarriers", &Barrier::getNumBarriers, "context"_a,
            "Get the number of barrier constraints.")
       .def_ro("gain", &Barrier::gain, "Barrier gain (gamma).")
+      .def_ro("barrier_values", &Barrier::barrier_values, "h(q) values from the last evaluation.")
       .def_ro("dt", &Barrier::dt, "Timestep.")
       .def_ro("safe_displacement_gain", &Barrier::safe_displacement_gain,
               "Gain for safe displacement regularization.")
@@ -163,7 +227,7 @@ void init_optimal_ik(nanobind::module_& m) {
            "axis_selection"_a = ConstraintAxisSelection(), "gain"_a = 1.0,
            "safe_displacement_gain"_a = 1.0, "safety_margin"_a = 0.0,
            "Create a position barrier with optional axis selection.")
-      .def("getFramePosition", &PositionBarrier::getFramePosition, "scene"_a,
+      .def("getFramePosition", &PositionBarrier::getFramePosition, "context"_a,
            "Get the current frame position in world coordinates.")
       .def_ro("frame_name", &PositionBarrier::frame_name, "Name of the constrained frame.")
       .def_ro("axis_selection", &PositionBarrier::axis_selection, "Axis selection for constraints.")
@@ -208,7 +272,9 @@ void init_optimal_ik(nanobind::module_& m) {
           "d_max", &SelfCollisionBarrier::d_max,
           "Maximum distance (meters) at which a collision pair is tracked; pairs whose bounding "
           "boxes are farther apart than this skip exact narrow-phase distance. None disables "
-          "culling.");
+          "culling.")
+      .def_ro("closest_pair_indices", &SelfCollisionBarrier::closest_pair_indices,
+              "Collision pair indices constrained in the last evaluation.");
 
   nanobind::class_<OinkSettings>(m, "OinkSettings", "Solver settings for the Oink QP (ProxQP).")
       .def(nanobind::init<>())
@@ -225,6 +291,32 @@ void init_optimal_ik(nanobind::module_& m) {
               "least-squares sense instead of failing, so solveIk() always returns a usable\n"
               "displacement.");
 
+  nanobind::class_<IterativeSolveOptions>(m, "IterativeSolveOptions",
+                                          "Options for Oink.solveIterativeIk().")
+      .def(nanobind::init<>())
+      .def_rw("max_iters", &IterativeSolveOptions::max_iters,
+              "Max iterations for one try of the solver.")
+      .def_rw("max_time", &IterativeSolveOptions::max_time,
+              "Max total computation time, in seconds.")
+      .def_rw("max_restarts", &IterativeSolveOptions::max_restarts,
+              "Maximum number of random restarts until success.")
+      .def_rw("stagnation_improvement", &IterativeSolveOptions::stagnation_improvement,
+              "An iteration counts as stagnant unless it shrinks the error to below this fraction "
+              "of the best so far.")
+      .def_rw("max_stagnant_iters", &IterativeSolveOptions::max_stagnant_iters,
+              "Consecutive stagnant iterations after which an attempt gives up and restarts.")
+      .def_rw("max_constraint_violation_norm",
+              &IterativeSolveOptions::max_constraint_violation_norm,
+              "The maximum norm of any constraint violation at the solution.")
+      .def_rw("regularization", &IterativeSolveOptions::regularization,
+              "Tikhonov regularization weight passed to each solveIk() step.")
+      .def_rw("check_collisions", &IterativeSolveOptions::check_collisions,
+              "Whether to also require the solution to be collision-free over every collision "
+              "pair.")
+      .def_rw("fast_return", &IterativeSolveOptions::fast_return,
+              "If true, returns the first configuration within the tolerances; otherwise keeps "
+              "iterating while the error still improves.");
+
   nanobind::class_<Oink>(m, "Oink", "Optimal Inverse Kinematics solver.")
       .def(nanobind::init<const Scene&, const std::string&>(), nanobind::keep_alive<1, 2>(),
            "scene"_a, "group_name"_a, "Constructor for a named joint group.")
@@ -236,9 +328,10 @@ void init_optimal_ik(nanobind::module_& m) {
       .def(nanobind::init<const Scene&, const OinkSettings&>(), nanobind::keep_alive<1, 2>(),
            "scene"_a, "settings"_a, "Constructor for the full robot with custom solver settings.")
       .def_rw("settings", &Oink::settings,
-              "QP solver settings. Changes take effect the next time the solver is rebuilt "
-              "(i.e., when the constraint dimensions change).")
+              "QP solver settings. warm_start applies on every solve; the rest take effect when a "
+              "priority level's solver is rebuilt (i.e., when its QP dimensions change).")
       .def_ro("num_variables", &Oink::num_variables, "Number of optimization variables.")
+      .def_ro("joint_names", &Oink::joint_names, "Names of the joints in the joint group.")
       .def_ro("q_indices", &Oink::q_indices, "Position indices of the joint group.")
       .def_ro("v_indices", &Oink::v_indices, "Velocity indices of the joint group.")
       .def(
@@ -256,8 +349,9 @@ void init_optimal_ik(nanobind::module_& m) {
           "scene"_a, "tasks"_a, "constraints"_a, "barriers"_a, "delta_q"_a,
           "regularization"_a = 1e-12,
           "Solve inverse kinematics for tasks, constraints, and barriers.\n\n"
-          "Solves a QP minimizing weighted task errors subject to the constraints and\n"
-          "barriers, writing the result into delta_q.\n\n"
+          "Solves one QP per task priority level, highest first, each restricted to the\n"
+          "nullspace of the levels above, minimizing weighted task errors subject to the\n"
+          "constraints and barriers. Writes the result into delta_q.\n\n"
           "Args:\n"
           "    tasks: List of weighted tasks to optimize for.\n"
           "    constraints: List of constraints to satisfy.\n"
@@ -368,6 +462,32 @@ void init_optimal_ik(nanobind::module_& m) {
           "    constraints: List of constraints to satisfy.\n"
           "    delta_q: Pre-allocated numpy array for output (size = num_variables).\n"
           "    regularization: Tikhonov regularization weight (default: 1e-12).")
+      .def(
+          "solveIterativeIk",
+          [](Oink& self, const Eigen::VectorXd& q_start,
+             const std::vector<std::shared_ptr<Task>>& goal_tasks,
+             const std::vector<std::shared_ptr<Task>>& extra_tasks,
+             const std::vector<std::shared_ptr<Constraints>>& constraints,
+             const std::vector<std::shared_ptr<Barrier>>& barriers,
+             const IterativeSolveOptions& options) {
+            auto result = self.solveIterativeIk(q_start, goal_tasks, extra_tasks, constraints,
+                                                barriers, options);
+            if (!result) {
+              throw std::runtime_error("Iterative IK solve failed: " + result.error());
+            }
+            return *result;
+          },
+          nanobind::call_guard<nanobind::gil_scoped_release>(), "q_start"_a, "goal_tasks"_a,
+          "extra_tasks"_a = std::vector<std::shared_ptr<Task>>{},
+          "constraints"_a = std::vector<std::shared_ptr<Constraints>>{},
+          "barriers"_a = std::vector<std::shared_ptr<Barrier>>{},
+          "options"_a = IterativeSolveOptions{},
+          "Iterates solveIk() from q_start until every goal task is reached, with random "
+          "restarts. Returns the full configuration; raises RuntimeError on failure.")
+      .def("refreshContext", &Oink::refreshContext,
+           "Re-snapshots the solver's collision context from its scene.")
+      .def("setRngSeed", &Oink::setRngSeed,
+           "Sets the seed for the random number generator (RNG)  for random restarts.", "seed"_a)
       .def(
           "enforceBarriers",
           [](Oink& self, const Eigen::VectorXd& q,
